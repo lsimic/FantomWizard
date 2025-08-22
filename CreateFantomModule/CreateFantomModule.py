@@ -649,8 +649,8 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       file.write("\r\n")
       # write number of voxels
       file.write(f"number of voxels: 0:{dimensions[0]} 0:{dimensions[1]} 0:{dimensions[2]}\r\n")
-      # write voxel size
-      file.write(f"voxel size {voxelSize[0]:.3f} x {voxelSize[1]:.3f} x {voxelSize[2]:.3f}\r\n")
+      # write voxel size, * 0.1 to convert from mm to cm
+      file.write(f"voxel size {(0.1 * voxelSize[0]):.3f} x {(0.1 * voxelSize[1]):.3f} x {(0.1 * voxelSize[2]):.3f}\r\n")
       # newline eof
       file.write("\r\n")
     
