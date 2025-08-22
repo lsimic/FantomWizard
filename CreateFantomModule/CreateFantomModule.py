@@ -611,11 +611,11 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       dimensions = volumeData.GetDimensions()
       # TODO: (Luka) verify that this order of xyz for export is correct. 
       # If data is jumbled this should be the first place to look
-      for x in range(dimensions[0]):
-        progressDialog.setLabelText("Step 2/3. exporting slice " + str(x) + " out of " + str(dimensions[0]))
+      for z in range(dimensions[2]):
+        progressDialog.setLabelText("Step 2/3. exporting slice " + str(z) + " out of " + str(dimensions[2]))
         slicer.app.processEvents()
         for y in range(dimensions[1]):
-          for z in range(dimensions[2]):
+          for x in range(dimensions[0]):
             # writing 20 voxels per line
             # if first voxel in the line, pad with 4 spaces at the beginning of the line
             if voxelIndex % 20 == 0:
