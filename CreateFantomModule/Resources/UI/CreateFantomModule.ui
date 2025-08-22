@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>325</width>
-    <height>525</height>
+    <width>321</width>
+    <height>538</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -225,6 +225,29 @@
         </property>
        </widget>
       </item>
+      <item row="2" column="0">
+       <widget class="ctkCheckBox" name="exportVoxelizedCheckBox">
+        <property name="enabled">
+         <bool>true</bool>
+        </property>
+        <property name="text">
+         <string>Export Voxelized format</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0" colspan="2">
+       <widget class="ctkDirectoryButton" name="exportVoxelizedDirectory">
+        <property name="caption">
+         <string>Export Location</string>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+       </widget>
+      </item>
      </layout>
     </widget>
    </item>
@@ -261,10 +284,20 @@
  </widget>
  <customwidgets>
   <customwidget>
+   <class>ctkCheckBox</class>
+   <extends>QCheckBox</extends>
+   <header>ctkCheckBox.h</header>
+  </customwidget>
+  <customwidget>
    <class>ctkCollapsibleButton</class>
    <extends>QWidget</extends>
    <header>ctkCollapsibleButton.h</header>
    <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ctkDirectoryButton</class>
+   <extends>QWidget</extends>
+   <header>ctkDirectoryButton.h</header>
   </customwidget>
   <customwidget>
    <class>ctkSliderWidget</class>

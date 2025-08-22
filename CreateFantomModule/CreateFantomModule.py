@@ -142,13 +142,17 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
     self.ui.heightWidget.connect("valueChanged(double)", self.onHeightChange)
     self.ui.trimesterWidget.connect("valueChanged(int)", self.onTrimesterOrHeadChange)
-    self.ui.headDownCheckBox.connect("stateChanged(bool)", self.onTrimesterOrHeadChange)
-    
+    self.ui.headDownCheckBox.connect("stateChanged(int)", self.onTrimesterOrHeadChange)
+    self.ui.exportVoxelizedCheckBox.connect("stateChanged(int)", self.onExportVoxelizedChange)
+
     # make sure that the values are in a valid range
     self.onTrimesterOrHeadChange()
 
     # Make sure parameter node is initialized (needed for module reload)
     self.initializeParameterNode()
+
+    # make sure that the folder selector is correctly enabled/disabled
+    self.onExportVoxelizedChange()
 
   def cleanup(self) -> None:
     """Called when the application closes and the module widget is destroyed."""
@@ -247,7 +251,15 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
       doPolyDataSegmentation = self.ui.generatePolyDataSegmentationCheckBox.checked
       doVolumeSegmentation = self.ui.generateVolumeSegmentationCheckBox.checked
-      self.logic.process(trimester, head, height, weight, voxelSize, doPolyDataSegmentation, doVolumeSegmentation)
+      exportVoxelized = self.ui.exportVoxelizedCheckBox.checked
+      exportVoxelizedDir = self.ui.exportVoxelizedDirectory.directory
+      self.logic.process(trimester, head, height, weight, voxelSize, doPolyDataSegmentation, doVolumeSegmentation, exportVoxelized, exportVoxelizedDir)
+
+  def onExportVoxelizedChange(self) -> None:
+    exportVoxelizedEnabled = self.ui.exportVoxelizedCheckBox.checked
+    print(exportVoxelizedEnabled)
+    self.ui.exportVoxelizedDirectory.enabled = exportVoxelizedEnabled
+  
 
 class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
   """This class should implement all the actual
@@ -427,7 +439,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     
     # Allocate image data and fill with background value (-1000 for air)
     volumeData.SetDimensions(volumeDimensions)
-    volumeData.AllocateScalars(vtk.VTK_FLOAT, 1)
+    volumeData.AllocateScalars(vtk.VTK_INT, 1)
     volumeData.GetPointData().GetScalars().Fill(-1000)
 
     # Set up the volume node
@@ -481,7 +493,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
 
     return
 
-  def process(self, trimester, head, height, weight, voxelSize, doPolySegmentation, doVolumeSegmentation) -> None:
+  def process(self, trimester, head, height, weight, voxelSize, doPolySegmentation, doVolumeSegmentation, exportVoxel, exportVoxelDir) -> None:
     # Create a new volume node to display the generated CT image.
     volumeNode = self.createVolumeNode(voxelSize)
     # Create volume data to be used inside the volume node.
@@ -533,6 +545,10 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       if doPolySegmentation:
         segmentationPolyDataNode.AddSegmentFromClosedSurfaceRepresentation(vtkPolyObject, lookupEntry["id"])
 
+    # if enabled, export to voxelized format
+    if exportVoxel:
+      self.exportVoxelized(exportVoxelDir, lookupArray, 10000, volumeData, voxelSize, progressDialog)
+
     # create a volume segmentation node. 
     if doVolumeSegmentation:
       segmentationVolumeNode = self.createVolumeSegmentationNode()
@@ -544,7 +560,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
 
       # set progress dialog value
       progressDialog.setValue(len(lookupArray) + lookupIndex)
-      progressDialog.setLabelText("Step 2/2. Processing " + lookupEntry["id"])
+      progressDialog.setLabelText("Step 3/3. Processing " + lookupEntry["id"])
       slicer.app.processEvents()
 
       # this is the current value in volume node, offset by 10000 to avoid overlap between index and hu value.
@@ -577,3 +593,67 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     
     # finished
     return
+
+  def exportVoxelized(self, exportDir, lookupArray, lookupOffset, volumeData, voxelSize, progressDialog):
+    # find first available file name in the directory do avoid overwriting existing files 
+    fileIndex = 0
+    filepath = ""
+    while True:
+      filepath = os.path.join(exportDir, "voxelized_form_" + str(fileIndex))
+      if not os.path.exists(filepath):
+        break
+      fileIndex = fileIndex + 1
+    
+    # open file for writing and export
+    with open(filepath, "w") as file:
+      # first write the volume data. 
+      voxelIndex = 0
+      dimensions = volumeData.GetDimensions()
+      # TODO: (Luka) verify that this order of xyz for export is correct. 
+      # If data is jumbled this should be the first place to look
+      for x in range(dimensions[0]):
+        progressDialog.setLabelText("Step 2/3. exporting slice " + str(x) + " out of " + str(dimensions[0]))
+        slicer.app.processEvents()
+        for y in range(dimensions[1]):
+          for z in range(dimensions[2]):
+            # writing 20 voxels per line
+            # if first voxel in the line, pad with 4 spaces at the beginning of the line
+            if voxelIndex % 20 == 0:
+              file.write("    ")
+            # get the voxel segmentation id and write it justified to 3 characters.
+            # air will have idvalue of 0
+            # the rest has idvalue offset by 1 compared to lookup table.
+            idxInLookupArray = int(volumeData.GetScalarComponentAsFloat(x,y,z,0)) - lookupOffset
+            if idxInLookupArray == -11000:
+              idValue = 0
+            else:
+              idValue = lookupArray[idxInLookupArray]["export_id"] + 1 
+            file.write(str(idValue).rjust(3))
+            # if last voxel in line, newline
+            if voxelIndex % 20 == 19:
+              file.write("\r\n")
+            # increment voxel index
+            voxelIndex = voxelIndex + 1
+      # final new line after last voxel if it was not exactly last voxel in the line
+      if voxelIndex % 20 != 0:
+        file.write("\r\n")  
+      # write some new lines
+      file.write("\r\n")
+      file.write("\r\n")
+      # write the lookup array. 
+      # TODO: (Luka) does it have to be sorted by export_id?
+      file.write("  0        $  air_outside\r\n")
+      for item in lookupArray:
+        file.write("  " + str(item["export_id"] + 1).ljust(9) + "$  " + item["id"] + "\r\n")
+      # write some new lines
+      file.write("\r\n")
+      # write number of voxels
+      file.write(f"number of voxels: 0:{dimensions[0]} 0:{dimensions[1]} 0:{dimensions[2]}\r\n")
+      # write voxel size
+      file.write(f"voxel size {voxelSize[0]:.3f} x {voxelSize[1]:.3f} x {voxelSize[2]:.3f}\r\n")
+      # newline eof
+      file.write("\r\n")
+    
+    # export done, log a mesage
+    print("Exported voxelized form to " + filepath)
+
