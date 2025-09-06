@@ -586,6 +586,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
         
         # set correct origin and set segmentation labelmap
         binaryLabelMap.SetOrigin(volumeNode.GetOrigin())
+        binaryLabelMap.SetSpacing(voxelSize)
         segmentationVolumeNode.AddSegmentFromBinaryLabelmapRepresentation(binaryLabelMap, lookupEntry["id"])
 
     # close the progress dialog
