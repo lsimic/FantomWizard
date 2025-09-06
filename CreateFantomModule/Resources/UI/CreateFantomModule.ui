@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>321</width>
+    <width>326</width>
     <height>538</height>
    </rect>
   </property>
@@ -48,6 +48,9 @@
       </item>
       <item row="1" column="0">
        <widget class="QLabel" name="heightLabel">
+        <property name="toolTip">
+         <string>From Bottom of Torso (Wihtout Legs)</string>
+        </property>
         <property name="text">
          <string>Fantom Height (cm)</string>
         </property>
@@ -74,8 +77,11 @@
       </item>
       <item row="2" column="0">
        <widget class="QLabel" name="weightLabel">
+        <property name="toolTip">
+         <string>Without Legs and Arms</string>
+        </property>
         <property name="text">
-         <string>Fantom Weight (kg)</string>
+         <string>Fantom Mass (kg)</string>
         </property>
        </widget>
       </item>
