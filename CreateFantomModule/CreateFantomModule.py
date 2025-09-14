@@ -143,7 +143,8 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     self.ui.heightWidget.connect("valueChanged(double)", self.onHeightChange)
     self.ui.trimesterWidget.connect("valueChanged(int)", self.onTrimesterOrHeadChange)
     self.ui.headDownCheckBox.connect("stateChanged(int)", self.onTrimesterOrHeadChange)
-    self.ui.exportVoxelizedCheckBox.connect("stateChanged(int)", self.onExportVoxelizedChange)
+    self.ui.exportVoxelizedCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
+    self.ui.exportDicomCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
 
     # make sure that the values are in a valid range
     self.onTrimesterOrHeadChange()
@@ -152,7 +153,7 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     self.initializeParameterNode()
 
     # make sure that the folder selector is correctly enabled/disabled
-    self.onExportVoxelizedChange()
+    self.onExportVoxelizedOrDicomChange()
 
   def cleanup(self) -> None:
     """Called when the application closes and the module widget is destroyed."""
@@ -252,13 +253,14 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
       doPolyDataSegmentation = self.ui.generatePolyDataSegmentationCheckBox.checked
       doVolumeSegmentation = self.ui.generateVolumeSegmentationCheckBox.checked
       exportVoxelized = self.ui.exportVoxelizedCheckBox.checked
+      exportDicom = self.ui.exportDicomCheckBox.checked
       exportVoxelizedDir = self.ui.exportVoxelizedDirectory.directory
-      self.logic.process(trimester, head, height, weight, voxelSize, doPolyDataSegmentation, doVolumeSegmentation, exportVoxelized, exportVoxelizedDir)
+      self.logic.process(trimester, head, height, weight, voxelSize, doPolyDataSegmentation, doVolumeSegmentation, exportVoxelized, exportDicom, exportVoxelizedDir)
 
-  def onExportVoxelizedChange(self) -> None:
+  def onExportVoxelizedOrDicomChange(self) -> None:
     exportVoxelizedEnabled = self.ui.exportVoxelizedCheckBox.checked
-    print(exportVoxelizedEnabled)
-    self.ui.exportVoxelizedDirectory.enabled = exportVoxelizedEnabled
+    exportDicomEnabled = self.ui.exportDicomCheckBox.checked
+    self.ui.exportVoxelizedDirectory.enabled = exportVoxelizedEnabled or exportDicomEnabled
   
 
 class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
@@ -493,7 +495,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
 
     return
 
-  def process(self, trimester, head, height, weight, voxelSize, doPolySegmentation, doVolumeSegmentation, exportVoxel, exportVoxelDir) -> None:
+  def process(self, trimester, head, height, weight, voxelSize, doPolySegmentation, doVolumeSegmentation, exportVoxel, exportDicom, exportVoxelDir) -> None:
     # Create a new volume node to display the generated CT image.
     volumeNode = self.createVolumeNode(voxelSize)
     # Create volume data to be used inside the volume node.
@@ -545,9 +547,13 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       if doPolySegmentation:
         segmentationPolyDataNode.AddSegmentFromClosedSurfaceRepresentation(vtkPolyObject, lookupEntry["id"])
 
+    fileIndex = 0
+    if exportDicom or exportVoxel:
+      fileIndex = self.getFileIndex(exportVoxelDir)
+
     # if enabled, export to voxelized format
     if exportVoxel:
-      self.exportVoxelized(exportVoxelDir, lookupArray, 10000, volumeData, voxelSize, progressDialog)
+      self.exportVoxelized(exportVoxelDir, fileIndex, lookupArray, 10000, volumeData, voxelSize, progressDialog)
 
     # create a volume segmentation node. 
     if doVolumeSegmentation:
@@ -589,22 +595,31 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
         binaryLabelMap.SetSpacing(voxelSize)
         segmentationVolumeNode.AddSegmentFromBinaryLabelmapRepresentation(binaryLabelMap, lookupEntry["id"])
 
+    # export dicom if enabled.
+    if exportDicom:
+      self.exportDicom(exportVoxelDir, fileIndex, volumeNode, progressDialog)
+
     # close the progress dialog
     progressDialog.close()
     
     # finished
     return
 
-  def exportVoxelized(self, exportDir, lookupArray, lookupOffset, volumeData, voxelSize, progressDialog):
+  def getFileIndex(self, exportDir):
     # find first available file name in the directory do avoid overwriting existing files 
     fileIndex = 0
     filepath = ""
     while True:
       filepath = os.path.join(exportDir, "voxelized_form_" + str(fileIndex))
-      if not os.path.exists(filepath):
+      dicompath = os.path.join(exportDir, "DICOM_" + str(fileIndex))
+      if os.path.exists(filepath) or os.path.exists(dicompath):
+        fileIndex = fileIndex + 1
+      else:
         break
-      fileIndex = fileIndex + 1
-    
+    return fileIndex
+
+  def exportVoxelized(self, exportDir, fileIndex, lookupArray, lookupOffset, volumeData, voxelSize, progressDialog):
+    filepath = os.path.join(exportDir, "voxelized_form_" + str(fileIndex))
     # open file for writing and export
     with open(filepath, "w") as file:
       # first write the volume data. 
@@ -658,3 +673,20 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     # export done, log a mesage
     print("Exported voxelized form to " + filepath)
 
+  def exportDicom(self, exportDir, fileIndex, volumeNode, progressDialog):
+    # update progress dialog string
+    progressDialog.setLabelText("Exporting Dicom...")
+    
+    # create the directory where dicom will be exported
+    dicomDirPath = os.path.join(exportDir, "DICOM_" + str(fileIndex))
+    os.mkdir(dicomDirPath)
+
+    # create parameters and execute createdicomseries module
+    parameters = {}
+    parameters["inputVolume"] = volumeNode
+    parameters["dicomDirectory"] = dicomDirPath
+    dicomSeriesModule = slicer.modules.createdicomseries
+    cliNode = slicer.cli.runSync(dicomSeriesModule, None, parameters)
+    slicer.mrmlScene.RemoveNode(cliNode)
+
+    return
