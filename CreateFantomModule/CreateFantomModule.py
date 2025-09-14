@@ -517,7 +517,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       
       # set progress dialog value
       progressDialog.setValue(lookupIndex)
-      progressDialog.setLabelText("Step 1/2. Processing " + lookupEntry["id"])
+      progressDialog.setLabelText("Processing " + lookupEntry["id"])
       slicer.app.processEvents()
 
       # read the gltf file. It will have correct scaling and blend shape applied
@@ -560,7 +560,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
 
       # set progress dialog value
       progressDialog.setValue(len(lookupArray) + lookupIndex)
-      progressDialog.setLabelText("Step 3/3. Processing " + lookupEntry["id"])
+      progressDialog.setLabelText("Processing " + lookupEntry["id"])
       slicer.app.processEvents()
 
       # this is the current value in volume node, offset by 10000 to avoid overlap between index and hu value.
@@ -613,7 +613,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       # TODO: (Luka) verify that this order of xyz for export is correct. 
       # If data is jumbled this should be the first place to look
       for z in range(dimensions[2]):
-        progressDialog.setLabelText("Step 2/3. exporting slice " + str(z) + " out of " + str(dimensions[2]))
+        progressDialog.setLabelText("Exporting slice " + str(z) + " out of " + str(dimensions[2]))
         slicer.app.processEvents()
         for y in range(dimensions[1]):
           for x in range(dimensions[0]):
