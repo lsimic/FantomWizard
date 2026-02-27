@@ -11,12 +11,12 @@ Drag and Drop the "CreateFantomModule" folder into "Additional module paths"
 The tool should become available under Wizards - Create Fantom  
 
 ## Usage Instructions
-Select desired trimester  
-For second trimester specify fetus orientation  
-Specify fantom weight and height
-Specify the voxel size (used for DICOM, voxelized format and voxel segmentation)  
-Specify what data should be generated  
+1. Select desired trimester  
+2. For second trimester specify fetus orientation  
+3. Specify fantom weight and height  
+4. Specify the voxel size (used for the volume nodes, voxelized format and voxel segmentation)  
+5. Specify what data should be generated
 - Volume Segmentation node - voxel based segmentation  
 - Polydata Segmentation node - mesh based segmentation  
 - Voxelized form - exports the generated fantom in the voxelized format for furhter use  
-(If enabled) Specify the output location for the voxelized form  
+6. (If enabled) Specify the output location for the voxelized form  
