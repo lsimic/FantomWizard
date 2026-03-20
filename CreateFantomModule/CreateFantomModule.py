@@ -216,6 +216,12 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     if self.ui.heightWidget.value > maxHeight:
       self.ui.heightWidget.value = maxHeight
 
+    # enable head down checkbox only in second trimester.
+    if trimester == 2:
+      self.ui.headDownCheckBox.setEnabled(True)
+    else:
+      self.ui.headDownCheckBox.setDisabled(True)
+
     # if the height changed, validate that the weight is in correct range.
     self.onHeightChange()
 
