@@ -322,7 +322,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     segmentationNode.SetSourceRepresentationToClosedSurface()
     return segmentationNode
   
-  def getLookupArray(self, trimester, head):
+  def getLookupArray(self):
     jsonPath = os.path.dirname(os.path.abspath(__file__))
     jsonPath = jsonPath + "/Resources/Data/_lookup_table.json"
     with open(jsonPath) as jsonFile:
@@ -534,7 +534,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       segmentationPolyDataNode = None
 
     # Fetch the lookup array that defines the loading order of objects and hu values.
-    lookupArray = self.getLookupArray(trimester, head)
+    lookupArray = self.getLookupArray()
 
     # create a progress dialog because the execution can take a while...
     progressDialog = slicer.util.createProgressDialog(parent = None, value = 0, maximum = 2 * len(lookupArray))
