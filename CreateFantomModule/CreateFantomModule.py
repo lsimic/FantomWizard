@@ -69,6 +69,14 @@ def ClampValue(val, min, max):
     return max
   return val
 
+def getLookupArray():
+  jsonPath = os.path.dirname(os.path.abspath(__file__))
+  jsonPath = jsonPath + "/Resources/Data/_lookup_table.json"
+  with open(jsonPath) as jsonFile:
+    jsonData = json.load(jsonFile)
+    return jsonData
+  return None
+
 class CreateFantomModule(ScriptedLoadableModule):
   """Uses ScriptedLoadableModule base class, available at:
   https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
@@ -155,6 +163,12 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     # make sure that the folder selector is correctly enabled/disabled
     self.onExportVoxelizedOrDicomChange()
+
+    # build segmentation list. 
+    lookupArray = getLookupArray()
+    for lookupEntry in lookupArray:
+      id = lookupEntry["id"]
+      self.ui.segmentationListWidget.addItem(id)
 
   def cleanup(self) -> None:
     """Called when the application closes and the module widget is destroyed."""
@@ -263,7 +277,10 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
       exportDicom = self.ui.exportDicomCheckBox.checked
       exportVoxelizedDir = self.ui.exportVoxelizedDirectory.directory
       volumeEnabled = self.ui.generateVolumeDataCheckBox.checked
-      self.logic.process(trimester, head, height, weight, voxelSize, volumeEnabled, doPolyDataSegmentation, doVolumeSegmentation, exportVoxelized, exportDicom, exportVoxelizedDir)
+      selectedSegmentations = []
+      for item in self.ui.segmentationListWidget.selectedItems():
+        selectedSegmentations.append(item.text())
+      self.logic.process(trimester, head, height, weight, voxelSize, selectedSegmentations, volumeEnabled, doPolyDataSegmentation, doVolumeSegmentation, exportVoxelized, exportDicom, exportVoxelizedDir)
 
   def onExportVoxelizedOrDicomChange(self) -> None:
     volumeEnabled = self.ui.generateVolumeDataCheckBox.checked
@@ -321,14 +338,6 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     segmentationNode.CreateDefaultDisplayNodes()
     segmentationNode.SetSourceRepresentationToClosedSurface()
     return segmentationNode
-  
-  def getLookupArray(self):
-    jsonPath = os.path.dirname(os.path.abspath(__file__))
-    jsonPath = jsonPath + "/Resources/Data/_lookup_table.json"
-    with open(jsonPath) as jsonFile:
-      jsonData = json.load(jsonFile)
-      return jsonData
-    return None
 
   def readVtkPolyObjectFromGltf(self, gltfPath):
     reader = vtk.vtkGLTFReader() 
@@ -514,10 +523,13 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
 
     return
 
-  def process(self, trimester, head, height, weight, voxelSize, createVolumeData, doPolySegmentation, doVolumeSegmentation, exportVoxel, exportDicom, exportVoxelDir) -> None:
+  def process(self, trimester, head, height, weight, voxelSize, selectedSegmentationIds, createVolumeData, doPolySegmentation, doVolumeSegmentation, exportVoxel, exportDicom, exportVoxelDir) -> None:
     if not createVolumeData:
       exportVoxel = False
       exportDicom = False
+
+    if len(selectedSegmentationIds) < 0:
+      return
     
     # note that, even if we don't generate the volume node itself, it is still necessary to generate the masks for segmentations
     # in order for the volume data segmentation to be generated. 
@@ -534,7 +546,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       segmentationPolyDataNode = None
 
     # Fetch the lookup array that defines the loading order of objects and hu values.
-    lookupArray = self.getLookupArray()
+    lookupArray = getLookupArray()
 
     # create a progress dialog because the execution can take a while...
     progressDialog = slicer.util.createProgressDialog(parent = None, value = 0, maximum = 2 * len(lookupArray))
@@ -542,6 +554,10 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     # iterate over the lookup Array, create volume masks from poly data and build the volume with correct index assigned
     for lookupIndex in range(len(lookupArray)):
       lookupEntry = lookupArray[lookupIndex]
+
+      # only allow segmentation ids that are selected.
+      if not lookupEntry["id"] in selectedSegmentationIds:
+        continue 
       
       # set progress dialog value
       progressDialog.setValue(lookupIndex)
@@ -589,6 +605,10 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     
     for lookupIndex in range(len(lookupArray)):
       lookupEntry = lookupArray[lookupIndex]
+
+      # only allow segmentation ids that are selected.
+      if not lookupEntry["id"] in selectedSegmentationIds:
+        continue 
 
       # set progress dialog value
       progressDialog.setValue(len(lookupArray) + lookupIndex)
