@@ -145,6 +145,7 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     self.ui.headDownCheckBox.connect("stateChanged(int)", self.onTrimesterOrHeadChange)
     self.ui.exportVoxelizedCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
     self.ui.exportDicomCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
+    self.ui.generateVolumeDataCheckBox.connect("stateChanged(int)", self.onGenerateVolumeDataChange)
 
     # make sure that the values are in a valid range
     self.onTrimesterOrHeadChange()
@@ -261,12 +262,24 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
       exportVoxelized = self.ui.exportVoxelizedCheckBox.checked
       exportDicom = self.ui.exportDicomCheckBox.checked
       exportVoxelizedDir = self.ui.exportVoxelizedDirectory.directory
-      self.logic.process(trimester, head, height, weight, voxelSize, doPolyDataSegmentation, doVolumeSegmentation, exportVoxelized, exportDicom, exportVoxelizedDir)
+      volumeEnabled = self.ui.generateVolumeDataCheckBox.checked
+      self.logic.process(trimester, head, height, weight, voxelSize, volumeEnabled, doPolyDataSegmentation, doVolumeSegmentation, exportVoxelized, exportDicom, exportVoxelizedDir)
 
   def onExportVoxelizedOrDicomChange(self) -> None:
+    volumeEnabled = self.ui.generateVolumeDataCheckBox.checked
     exportVoxelizedEnabled = self.ui.exportVoxelizedCheckBox.checked
     exportDicomEnabled = self.ui.exportDicomCheckBox.checked
-    self.ui.exportVoxelizedDirectory.enabled = exportVoxelizedEnabled or exportDicomEnabled
+    self.ui.exportVoxelizedDirectory.enabled = (exportVoxelizedEnabled or exportDicomEnabled) and volumeEnabled
+
+  def onGenerateVolumeDataChange(self) -> None:
+    # when we disable generating volume data, disable the checkboxes for voxelized and dicom export.
+    if self.ui.generateVolumeDataCheckBox.checked:
+      self.ui.exportVoxelizedCheckBox.setEnabled(True)
+      self.ui.exportDicomCheckBox.setEnabled(True)
+    else:
+      self.ui.exportVoxelizedCheckBox.setDisabled(True)
+      self.ui.exportDicomCheckBox.setDisabled(True)
+    self.onExportVoxelizedOrDicomChange()
   
 
 class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
@@ -501,7 +514,14 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
 
     return
 
-  def process(self, trimester, head, height, weight, voxelSize, doPolySegmentation, doVolumeSegmentation, exportVoxel, exportDicom, exportVoxelDir) -> None:
+  def process(self, trimester, head, height, weight, voxelSize, createVolumeData, doPolySegmentation, doVolumeSegmentation, exportVoxel, exportDicom, exportVoxelDir) -> None:
+    if not createVolumeData:
+      exportVoxel = False
+      exportDicom = False
+    
+    # note that, even if we don't generate the volume node itself, it is still necessary to generate the masks for segmentations
+    # in order for the volume data segmentation to be generated. 
+
     # Create a new volume node to display the generated CT image.
     volumeNode = self.createVolumeNode(voxelSize)
     # Create volume data to be used inside the volume node.
@@ -585,7 +605,8 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       imageStencilData = self.thresholdImage(volumeData, valueInVolumeNode)
       
       # apply the image stencil to the volume data, in order to set the final, correct HU value.
-      self.replaceDataUsingStencil(volumeData, imageStencilData, currentHUValue)
+      if createVolumeData:
+        self.replaceDataUsingStencil(volumeData, imageStencilData, currentHUValue)
 
       if doVolumeSegmentation:
         # add binary label map to segmentation and fill it using the stencil
@@ -604,6 +625,10 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     # export dicom if enabled.
     if exportDicom:
       self.exportDicom(exportVoxelDir, fileIndex, volumeNode, progressDialog)
+
+    # delete the volume node if it's not required
+    if not createVolumeData:
+      slicer.mrmlScene.RemoveNode(volumeNode)
 
     # close the progress dialog
     progressDialog.close()

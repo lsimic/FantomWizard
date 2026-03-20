@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>326</width>
-    <height>591</height>
+    <width>357</width>
+    <height>704</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -214,7 +214,7 @@
       <bool>true</bool>
      </property>
      <layout class="QFormLayout" name="formLayout_3">
-      <item row="0" column="0">
+      <item row="1" column="0">
        <widget class="QCheckBox" name="generateVolumeSegmentationCheckBox">
         <property name="text">
          <string>Generate Volume Segmentation Node</string>
@@ -224,7 +224,7 @@
         </property>
        </widget>
       </item>
-      <item row="1" column="0">
+      <item row="3" column="0">
        <widget class="QCheckBox" name="generatePolyDataSegmentationCheckBox">
         <property name="text">
          <string>Generate Polydata Segmentation Node</string>
@@ -234,7 +234,7 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="0">
+      <item row="4" column="0">
        <widget class="ctkCheckBox" name="exportVoxelizedCheckBox">
         <property name="enabled">
          <bool>true</bool>
@@ -247,7 +247,7 @@
         </property>
        </widget>
       </item>
-      <item row="4" column="0" colspan="2">
+      <item row="6" column="0" colspan="2">
        <widget class="ctkDirectoryButton" name="exportVoxelizedDirectory">
         <property name="caption">
          <string>Export Location</string>
@@ -257,10 +257,26 @@
         </property>
        </widget>
       </item>
-      <item row="3" column="0">
+      <item row="5" column="0">
        <widget class="ctkCheckBox" name="exportDicomCheckBox">
         <property name="text">
          <string>Export Dicom</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="0">
+       <widget class="QCheckBox" name="generateVolumeDataCheckBox">
+        <property name="enabled">
+         <bool>true</bool>
+        </property>
+        <property name="text">
+         <string>Generate Volume Data</string>
+        </property>
+        <property name="checkable">
+         <bool>true</bool>
         </property>
         <property name="checked">
          <bool>true</bool>
