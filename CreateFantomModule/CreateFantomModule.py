@@ -154,6 +154,9 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     self.ui.exportVoxelizedCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
     self.ui.exportDicomCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
     self.ui.generateVolumeDataCheckBox.connect("stateChanged(int)", self.onGenerateVolumeDataChange)
+    self.ui.generatePolyDataSegmentationCheckBox.connect("stateChanged(int)", self.applyButtonEnabling)
+    self.ui.generateVolumeSegmentationCheckBox.connect("stateChanged(int)", self.applyButtonEnabling)
+    self.ui.segmentationListWidget.connect("itemSelectionChanged()", self.applyButtonEnabling)
 
     # make sure that the values are in a valid range
     self.onTrimesterOrHeadChange()
@@ -169,6 +172,9 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     for lookupEntry in lookupArray:
       id = lookupEntry["id"]
       self.ui.segmentationListWidget.addItem(id)
+
+    # make sure that the apply button has correct enabling state on init
+    self.applyButtonEnabling() 
 
   def cleanup(self) -> None:
     """Called when the application closes and the module widget is destroyed."""
@@ -297,7 +303,18 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
       self.ui.exportVoxelizedCheckBox.setDisabled(True)
       self.ui.exportDicomCheckBox.setDisabled(True)
     self.onExportVoxelizedOrDicomChange()
-  
+    self.applyButtonEnabling()
+
+  def applyButtonEnabling(self) -> None:
+    hasSelected = len(self.ui.segmentationListWidget.selectedItems()) > 0
+    volumeEnabled = self.ui.generateVolumeDataCheckBox.checked
+    segmentationEnabled = self.ui.generatePolyDataSegmentationCheckBox.checked or self.ui.generateVolumeSegmentationCheckBox.checked
+    applyEnabled = hasSelected and (volumeEnabled or segmentationEnabled)
+    if applyEnabled:
+      self.ui.applyButton.setEnabled(True)
+    else:
+      self.ui.applyButton.setDisabled(True)
+
 
 class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
   """This class should implement all the actual
