@@ -141,7 +141,7 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     # Buttons
     self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
     self.ui.heightWidget.connect("valueChanged(double)", self.onHeightChange)
-    self.ui.trimesterWidget.connect("valueChanged(int)", self.onTrimesterOrHeadChange)
+    self.ui.trimesterWidget.connect("valueChanged(double)", self.onTrimesterOrHeadChange)
     self.ui.headDownCheckBox.connect("stateChanged(int)", self.onTrimesterOrHeadChange)
     self.ui.exportVoxelizedCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
     self.ui.exportDicomCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
