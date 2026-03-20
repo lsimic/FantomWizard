@@ -157,6 +157,7 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     self.ui.generatePolyDataSegmentationCheckBox.connect("stateChanged(int)", self.applyButtonEnabling)
     self.ui.generateVolumeSegmentationCheckBox.connect("stateChanged(int)", self.applyButtonEnabling)
     self.ui.segmentationListWidget.connect("itemSelectionChanged()", self.applyButtonEnabling)
+    self.ui.segmentationListComboBox.connect("currentIndexChanged(int)", self.segementationComboIndexChange)
 
     # make sure that the values are in a valid range
     self.onTrimesterOrHeadChange()
@@ -172,6 +173,12 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     for lookupEntry in lookupArray:
       id = lookupEntry["id"]
       self.ui.segmentationListWidget.addItem(id)
+
+    # default selection for segmentation list
+    self.initSegmentationPresetComboBox()
+    defaultId = self.ui.segmentationListComboBox.findText("Default")
+    self.ui.segmentationListComboBox.setCurrentIndex(defaultId)
+    self.setSelectedSegmentationsFromPreset("Default")
 
     # make sure that the apply button has correct enabling state on init
     self.applyButtonEnabling() 
@@ -315,6 +322,26 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     else:
       self.ui.applyButton.setDisabled(True)
 
+  def setSelectedSegmentationsFromPreset(self, presetName) -> None:
+    jsonPath = os.path.dirname(os.path.abspath(__file__))
+    jsonPath = jsonPath + "/Resources/Data/SegmentationPresets/" + presetName + ".json"
+    with open(jsonPath) as jsonFile:
+      selectedSegmentations = json.load(jsonFile)
+      for index in range(self.ui.segmentationListWidget.count):
+        item = self.ui.segmentationListWidget.item(index)
+        item.setSelected(item.text() in selectedSegmentations)
+
+  def initSegmentationPresetComboBox(self) -> None:
+    combobox = self.ui.segmentationListComboBox
+    presetsDir = os.path.dirname(os.path.abspath(__file__))
+    presetsDir += "/Resources/Data/SegmentationPresets"
+    for item in os.listdir(presetsDir):
+      if item.endswith(".json"):
+        combobox.addItem(item[:-5])
+
+  def segementationComboIndexChange(self, index) -> None:
+    text = self.ui.segmentationListComboBox.itemText(index)
+    self.setSelectedSegmentationsFromPreset(text)
 
 class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
   """This class should implement all the actual
