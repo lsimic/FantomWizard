@@ -263,6 +263,69 @@ class GenerateFantomTabWidget:
     self.setSelectedSegmentationsFromPreset(text)
 
 
+class SegmentationToFantomTabWidget:
+  def __init__(self, logic, resourcePath):
+    self.logic = logic
+    self.resourcePath = resourcePath
+    self.widget = slicer.util.loadUI(self.resourcePath('UI/SegmentationToFantomTab.ui'))
+    self.ui = slicer.util.childWidgetVariables(self.widget)
+
+    # Buttons
+    self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
+    self.ui.exportVoxelizedCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
+    self.ui.exportDicomCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
+    self.ui.generateVolumeDataCheckBox.connect("stateChanged(int)", self.onGenerateVolumeDataChange)
+    self.ui.segmentationNodeComboBox.setMRMLScene(slicer.mrmlScene)
+    self.ui.segmentationNodeComboBox.connect("currentNodeChanged(bool)", self.onSegmentationNodeComboBoxChange)
+
+    # make sure that the folder selector is correctly enabled/disabled
+    self.onExportVoxelizedOrDicomChange()
+
+    # make sure that the apply button has correct enabling state on init
+    self.applyButtonEnabling() 
+
+  def onApplyButton(self) -> None:
+    """Run processing when user clicks "Apply" button."""
+    with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
+      # Compute output
+      exportVoxelized = self.ui.exportVoxelizedCheckBox.checked
+      exportDicom = self.ui.exportDicomCheckBox.checked
+      exportVoxelizedDir = self.ui.exportVoxelizedDirectory.directory
+      currentNodeID = self.ui.segmentationNodeComboBox.currentNodeID
+      currentNode = slicer.mrmlScene.GetNodeByID(currentNodeID)
+      segmentation = currentNode.GetSegmentation()
+
+      self.logic.processFromSegmentation(segmentation, exportVoxelized, exportDicom, exportVoxelizedDir) 
+
+  def onExportVoxelizedOrDicomChange(self) -> None:
+    volumeEnabled = self.ui.generateVolumeDataCheckBox.checked
+    exportVoxelizedEnabled = self.ui.exportVoxelizedCheckBox.checked
+    exportDicomEnabled = self.ui.exportDicomCheckBox.checked
+    self.ui.exportVoxelizedDirectory.enabled = (exportVoxelizedEnabled or exportDicomEnabled) and volumeEnabled
+
+  def onGenerateVolumeDataChange(self) -> None:
+    # when we disable generating volume data, disable the checkboxes for voxelized and dicom export.
+    if self.ui.generateVolumeDataCheckBox.checked:
+      self.ui.exportVoxelizedCheckBox.setEnabled(True)
+      self.ui.exportDicomCheckBox.setEnabled(True)
+    else:
+      self.ui.exportVoxelizedCheckBox.setDisabled(True)
+      self.ui.exportDicomCheckBox.setDisabled(True)
+    self.onExportVoxelizedOrDicomChange()
+    self.applyButtonEnabling()
+
+  def onSegmentationNodeComboBoxChange(self, isValidNode) -> None:
+    self.applyButtonEnabling()
+  
+  def applyButtonEnabling(self) -> None:
+    applyEnabled = self.ui.generateVolumeDataCheckBox.checked
+    currentNode = self.ui.segmentationNodeComboBox.currentNodeID
+    if applyEnabled and currentNode:
+      self.ui.applyButton.setEnabled(True)
+    else:
+      self.ui.applyButton.setDisabled(True)
+
+
 class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
   """Uses ScriptedLoadableModuleWidget base class, available at:
   https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
@@ -301,10 +364,10 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     # Create tab widgets, inject into tabs
     self.generateFantomTabUI = GenerateFantomTabWidget(self.logic, self.resourcePath)
     # self.blendSegmentationsTabUI = GenerateFantomTabWidget(self.logic, self.resourcePath)
-    # self.segmentToFantomTabUI = GenerateFantomTabWidget(self.logic, self.resourcePath)
+    self.segmentToFantomTabUI = SegmentationToFantomTabWidget(self.logic, self.resourcePath)
     self.ui.generateFantomTab.layout().addWidget(self.generateFantomTabUI.widget)
     # self.ui.blendSegmentationsTab.layout().addWidget(self.blendSegmentationsTabUI.widget)
-    # self.ui.segmentToFantomTab.layout().addWidges(self.segmentToFantomTabUI.widget)
+    self.ui.segmentToFantomTab.layout().addWidget(self.segmentToFantomTabUI.widget)
 
     # These connections ensure that we update parameter node when scene is closed
     self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
@@ -555,6 +618,22 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     
     return
   
+  def applyImageStencilToVolume(self, imageData, volumeData, backgroundValue):
+    imageDataToImageStencil = vtk.vtkImageToImageStencil()
+    imageDataToImageStencil.SetInputData(imageData)
+    imageDataToImageStencil.ThresholdByUpper(1)
+    imageDataToImageStencil.Update()
+    imageStencilData = imageDataToImageStencil.GetOutput()
+
+    imageStencil = vtk.vtkImageStencil()
+    imageStencil.SetStencilData(imageStencilData)
+    imageStencil.ReverseStencilOn()
+    imageStencil.SetBackgroundValue(backgroundValue)
+    imageStencil.SetInputData(volumeData)
+    imageStencil.SetOutput(volumeData)
+    imageStencil.Update()
+    
+  
   def createVolumeSegmentationNode(self):
     segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
     segmentationNode.SetName("Segmentation")
@@ -798,5 +877,93 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     cliNode = slicer.cli.runSync(dicomSeriesModule, None, parameters)
     slicer.mrmlScene.RemoveNode(cliNode)
 
+    return
+
+  def processFromSegmentation(self, segmentation, exportVoxel, exportDicom, exportDir) -> None:
+    # from the segmentation, build a map from segment name -> segment id. 
+    segmentNameToIdMap = dict()
+    for segmentId in segmentation.GetSegmentIDs():
+      segment = segmentation.GetSegment(segmentId)
+      segmentNameToIdMap[segment.GetName()] = segmentId
+
+    # Fetch the lookup array that defines the loading order of objects and hu values.
+    lookupArray = getLookupArray()
+
+    # get the soft tissue imagedata. 
+    # use the soft tissues segment as a reference volume.
+    lableMapName = slicer.vtkSegmentationConverter.GetSegmentationBinaryLabelmapRepresentationName()
+    softTissueImageData = segmentation.GetSegment(segmentNameToIdMap["soft_tissues"]).GetRepresentation(lableMapName)
+    voxelSize = softTissueImageData.GetSpacing()
+    bounds = softTissueImageData.GetBounds()
+
+    # create a progress dialog because the execution can take a while...
+    progressDialog = slicer.util.createProgressDialog(parent = None, value = 0, maximum = 2 * len(lookupArray))
+
+    # create volume node and volume data
+    # Create volume data to be used inside the volume node.
+    volumeNode = self.createVolumeNode(voxelSize)
+    volumeData = vtk.vtkImageData()
+    self.initializeVolumeDataAndVolumeNode(volumeNode, volumeData, bounds, voxelSize)
+
+    # iterate over the lookup Array, create volume masks from poly data and build the volume with correct index assigned
+    for lookupIndex in range(len(lookupArray)):
+      lookupEntry = lookupArray[lookupIndex]
+      # only allow segmentation ids that are available are processed
+      if not lookupEntry["id"] in segmentNameToIdMap:
+        continue 
+      # get segmentation.
+      currentSegmentationVolumeData = segmentation.GetSegment(segmentNameToIdMap[lookupEntry["id"]]).GetRepresentation(lableMapName)
+      if currentSegmentationVolumeData is None:
+        continue
+
+      # set progress dialog value
+      progressDialog.setValue(lookupIndex)
+      progressDialog.setLabelText("Processing " + lookupEntry["id"])
+      slicer.app.processEvents()
+                 
+      # apply image as stencil
+      self.applyImageStencilToVolume(currentSegmentationVolumeData, volumeData, 10000 + lookupIndex)
+
+    fileIndex = 0
+    if exportDicom or exportVoxel:
+      fileIndex = self.getFileIndex(exportDir)
+
+    # if enabled, export to voxelized format
+    if exportVoxel:
+      self.exportVoxelized(exportDir, fileIndex, lookupArray, 10000, volumeData, voxelSize, progressDialog)
+
+    # make the volume with appropriate segmentation ids
+    for lookupIndex in range(len(lookupArray)):
+      lookupEntry = lookupArray[lookupIndex]
+
+      # only allow segmentation ids that are selected.
+      if not lookupEntry["id"] in segmentNameToIdMap:
+        continue 
+
+      # set progress dialog value
+      progressDialog.setValue(len(lookupArray) + lookupIndex)
+      progressDialog.setLabelText("Processing " + lookupEntry["id"])
+      slicer.app.processEvents()
+
+      # this is the current value in volume node, offset by 10000 to avoid overlap between index and hu value.
+      valueInVolumeNode = 10000 + lookupIndex
+
+      # compute the hu value as just the average of min/max
+      currentHUValue = 0.5 * (lookupEntry["hu_min"] + lookupEntry["hu_max"])
+
+      # create the image stencil by thresholding the volume data with the current value in volume node.
+      imageStencilData = self.thresholdImage(volumeData, valueInVolumeNode)
+      
+      # apply the image stencil to the volume data, in order to set the final, correct HU value.
+      self.replaceDataUsingStencil(volumeData, imageStencilData, currentHUValue)
+
+    # export dicom if enabled.
+    if exportDicom:
+      self.exportDicom(exportDir, fileIndex, volumeNode, progressDialog)
+
+    # close the progress dialog
+    progressDialog.close()
+    
+    # finished
     return
 
