@@ -14,28 +14,25 @@
    <item>
     <widget class="QTabWidget" name="tabWidget">
      <property name="currentIndex">
-      <number>2</number>
+      <number>0</number>
      </property>
      <widget class="QWidget" name="generateFantomTab">
       <attribute name="title">
        <string>Generate</string>
       </attribute>
-      <layout class="QVBoxLayout" name="verticalLayout">
-      </layout>
+      <layout class="QVBoxLayout" name="verticalLayout"/>
      </widget>
      <widget class="QWidget" name="blendSegmentationsTab">
       <attribute name="title">
        <string>Blend</string>
       </attribute>
-      <layout class="QVBoxLayout" name="verticalLayout">
-      </layout>
+      <layout class="QVBoxLayout" name="verticalLayout"/>
      </widget>
      <widget class="QWidget" name="segmentToFantomTab">
       <attribute name="title">
        <string>Export</string>
       </attribute>
-      <layout class="QVBoxLayout" name="verticalLayout">
-      </layout>
+      <layout class="QVBoxLayout" name="verticalLayout"/>
      </widget>
     </widget>
    </item>
