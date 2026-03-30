@@ -14,7 +14,7 @@ The functionality under the "Generate" tab can be used to create new computation
 1. Select the desired trimester
 2. (Optional) In the case of second trimester, specify fetus orientation
 3. Specify fantom weight and height
-4. Specify the voxel size. The same voxel size is used for segmentation, volume, DICOM data and voxelized format export. 
+4. Specify the voxel size. The same voxel size is used for segmentation, volume, DICOM data and voxelized format export. *Note that small voxel sizes (<1mm) can significantly impact performance.*
 5. Select the tissue types that should be included. The combo box can be used to pick a preset ("Default" or "All"). 
 6. Specify which data should be generated  
     - Generate Volume Data - a new volume data node will be added to the active Slicer scene. 
