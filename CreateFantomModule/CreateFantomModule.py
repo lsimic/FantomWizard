@@ -116,9 +116,6 @@ class GenerateFantomTabWidget:
     self.widget = slicer.util.loadUI(self.resourcePath('UI/GenerateFantomTab.ui'))
     self.ui = slicer.util.childWidgetVariables(self.widget)
 
-    # uiWidget = slicer.util.loadUI(self.resourcePath("UI/CreateFantomModule.ui"))
-    # self.layout.addWidget(uiWidget)
-
     # Buttons
     self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
     self.ui.heightWidget.connect("valueChanged(double)", self.onHeightChange)
