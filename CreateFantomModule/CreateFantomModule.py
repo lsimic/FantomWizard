@@ -514,9 +514,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     heightFactor, weightFactor = self.computeBlendFactors(trimester, head, height, weight)
     return self.getScaledVtkPolyObjectWithWeights(name, trimester, head, heightFactor, weightFactor)
 
-  def initializeVolumeDataAndVolumeNode(self, volumeNode, volumeData, vtkPolyObject, voxelSize):
-    volumeBounds = vtkPolyObject.GetBounds() # (xmin, xmax, ymin, ymax, zmin, zmax), in mm
-
+  def initializeVolumeDataAndVolumeNode(self, volumeNode, volumeData, volumeBounds, voxelSize):
     # Compute the bounds of the image (mm), extent (voxels) and volume origin.
     volumeDimensions = []
     volumeOrigin = []
@@ -524,7 +522,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       valMin = volumeBounds[2 * axis]
       valMax = volumeBounds[2 * axis + 1]
       size = voxelSize[axis]
-      volumeDimensions.append(math.ceil((valMax - valMin) / size) + 4) # include small padding
+      volumeDimensions.append(math.ceil((valMax - valMin) / size))
       volumeOrigin.append(valMin)
     
     # Allocate image data and fill with background value (-1000 for air)
@@ -633,7 +631,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       # if this is the first entry, initialize the image
       # the first entry is the soft tissue segmentation and that one is the largest and defines the extent of the image
       if lookupIndex == 0:
-        self.initializeVolumeDataAndVolumeNode(volumeNode, volumeData, vtkPolyObject, voxelSize)
+        self.initializeVolumeDataAndVolumeNode(volumeNode, volumeData, vtkPolyObject.GetBounds(), voxelSize)
         print("Requested height: " + str(height) + ". Requested weight: " + str(weight))
         massProperties = vtk.vtkMassProperties()
         massProperties.SetInputData(vtkPolyObject)
