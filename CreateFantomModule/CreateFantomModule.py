@@ -15,6 +15,8 @@ from slicer.parameterNodeWrapper import (
 )
 from slicer import vtkMRMLScalarVolumeNode
 import sys
+import scipy
+import numpy
 
 def getTrimesterHeadString(trimester, head):
   if trimester == 1:
@@ -1032,6 +1034,68 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     slicer.util.selectModule("Markups")
   
   def alignNodeUsingMarkupLines(self, nodeToAlign, alignRotation, alignTranslation) -> None:
+    # gather the markup lines and their start/end positions 
+    startPositions = []
+    endPositions = []
+    lineNodes = []
+    for lineIdx in range(4):
+      markupLineName = "FantomLine" + str(lineIdx)
+      itemList = slicer.mrmlScene.GetNodesByName(markupLineName)
+      if itemList.GetNumberOfItems() < 1:
+        print("item list empty")
+        return
+      lineNode = itemList.GetItemAsObject(0)
+      startPositions.append(numpy.array(lineNode.GetLineStartPosition()))
+      endPositions.append(numpy.array(lineNode.GetLineEndPosition()))
+      lineNodes.append(lineNode)
+    # kabsch algorithm to construct the transform matrix
+    # compute the translation matrix part
+    startMidPoint = startPositions[0]
+    endMidPoint = endPositions[0]
+    for idx in range(1, 4):
+      startMidPoint = startMidPoint + startPositions[idx]
+      endMidPoint = endMidPoint + endPositions[idx]
+    startMidPoint = 0.25 * startMidPoint
+    endMidPoint = 0.25 * endMidPoint
+    # move points to origin
+    # compute sum of lengths of each point-origin
+    startLen = 0.0
+    endLen = 0.0
+    startPositionsOrigin = []
+    endPositionsOrigin = []
+    for idx in range(4):
+      startPositionsOrigin.append(startPositions[idx] - startMidPoint)
+      endPositionsOrigin.append(endPositions[idx] - endMidPoint)
+      startLen = startLen + numpy.linalg.norm(startPositions[idx])
+      endLen = endLen + numpy.linalg.norm(endPositions[idx])
+    # scale. scale factor is computed by summing up the distances from point to origin. 
+    scaleFac = endLen / startLen
+    for idx in range(4):
+      startPositionsOrigin[idx] = scaleFac * startPositions[idx]
+    # kabsch algorithm to compute the rotation part
+    alignRes = scipy.spatial.transform.Rotation.align_vectors(endPositionsOrigin, startPositionsOrigin)
+    # final transformation matrix
+    rotationMatrix = numpy.eye(4)
+    rotationMatrix[:3, :3] = alignRes[0].as_matrix()
+    srcPivot = numpy.array(startMidPoint)
+    srcToOrigin = numpy.eye(4)
+    srcToOrigin[:3,3] = -srcPivot
+    dstPivot = numpy.array(endMidPoint)
+    originToDst = numpy.eye(4)
+    originToDst[:3,3] = dstPivot
+    transform = originToDst @ rotationMatrix @ srcToOrigin
+    # apply transformation to markup line start points and set them back.
+    for idx in range(4):
+      posH = numpy.append(startPositions[idx], 1)
+      posH = transform @ posH
+      startPositions[idx] = posH[:3] / posH[3]
+      lineNodes[idx].SetLineStartPosition(startPositions[idx])
+    # apply transformation to segmentation node
+    vtkTrans = vtk.vtkTransform()
+    vtkMat = slicer.util.vtkMatrixFromArray(transform)
+    vtkTrans.SetMatrix(vtkMat)
+    nodeToAlign.ApplyTransform(vtkTrans)
+    nodeToAlign.GetDisplayNode().Modified()
     return
 
   def blendSegmentationNodes(self, node1, node2) -> None:
