@@ -1005,7 +1005,31 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     return
 
   def setUpMarkupLines(self) -> None:
-    return
+    for lineIdx in range(4):
+      markupLineName = "FantomLine" + str(lineIdx)
+      itemList = slicer.mrmlScene.GetNodesByName(markupLineName)
+      if itemList.GetNumberOfItems() > 0:
+        lineNode = itemList.GetItemAsObject(0)
+      else:
+        lineNode = slicer.modules.markups.logic().AddNewMarkupsNode("vtkMRMLMarkupsLineNode", markupLineName)
+        lineNode.CreateDefaultDisplayNodes()
+      # display settings
+      displayNode = lineNode.GetDisplayNode()
+      displayNode.SetGlyphTypeFromString("CrossDot2D")
+      displayNode.SetPropertiesLabelVisibility(False)
+      displayNode.SetPointLabelsVisibility(True)
+      displayNode.SetOccludedVisibility(True)
+      displayNode.SetSliceProjection(True)
+      # set some reasonable default coordinates for line end points (RAS)
+      coordR = 50 if lineIdx & 1 else -50
+      coordA = 50 if lineIdx & 2 else -50
+      lineNode.SetLineStartPosition((coordR, coordA, 100))
+      lineNode.SetLineEndPosition((coordR, coordA, 0))
+      # start, end point labels
+      lineNode.SetNthControlPointLabel(0, str(lineIdx) + " Patient")
+      lineNode.SetNthControlPointLabel(1, str(lineIdx) + " Fantom")
+    # switch to markups module to edit the lines.
+    slicer.util.selectModule("Markups")
   
   def alignNodeUsingMarkupLines(self, nodeToAlign, alignRotation, alignTranslation) -> None:
     return
