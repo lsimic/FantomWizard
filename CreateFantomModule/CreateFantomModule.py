@@ -326,6 +326,43 @@ class SegmentationToFantomTabWidget:
       self.ui.applyButton.setDisabled(True)
 
 
+class BlendTabWidget:
+  def __init__(self, logic, resourcePath):
+    self.logic = logic
+    self.resourcePath = resourcePath
+    self.widget = slicer.util.loadUI(self.resourcePath('UI/BlendSegmentationsTab.ui'))
+    self.ui = slicer.util.childWidgetVariables(self.widget)
+
+    # Buttons
+    self.ui.generateMarkupLinesButton.connect("clicked(bool)", self.onGenerateMarkupLinesButton)
+    self.ui.alignButton.connect("clicked(bool)", self.onAlignButton)
+    self.ui.blendButton.connect("clicked(bool)", self.onBlendButton)
+    self.ui.alignNodeComboBox.setMRMLScene(slicer.mrmlScene)
+    self.ui.blendNode1ComboBox.setMRMLScene(slicer.mrmlScene)
+    self.ui.blendNode2ComboBox.setMRMLScene(slicer.mrmlScene)
+
+  def onGenerateMarkupLinesButton(self) -> None:
+    self.logic.setUpMarkupLines()
+
+  def onAlignButton(self) -> None:
+    alignRotation = self.ui.alignRotationCheckBox.checked
+    alignTranslation = self.ui.alignTranslationCheckBox.checked
+    nodeToAlignID = self.ui.alignNodeComboBox.currentNodeID
+    nodeToAlign = slicer.mrmlScene.GetNodeByID(nodeToAlignID)
+    somethingToAlign = alignTranslation or alignRotation
+    if not (somethingToAlign or nodeToAlign):
+      return
+    self.logic.alignNodeUsingMarkupLines(nodeToAlign, alignRotation, alignTranslation)
+
+  def onBlendButton(self) -> None:
+    nodeID1 = self.ui.blendNode1ComboBox.currentNodeID
+    nodeID2 = self.ui.blendNode2ComboBox.currentNodeID
+    node1 = slicer.mrmlScene.GetNodeByID(nodeID1)
+    node2 = slicer.mrmlScene.GetNodeByID(nodeID2)
+    if not (node1 and node2):
+      return
+    self.logic.blendSegmentationNodes(node1, node2)
+
 class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
   """Uses ScriptedLoadableModuleWidget base class, available at:
   https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
@@ -363,10 +400,10 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     # Create tab widgets, inject into tabs
     self.generateFantomTabUI = GenerateFantomTabWidget(self.logic, self.resourcePath)
-    # self.blendSegmentationsTabUI = GenerateFantomTabWidget(self.logic, self.resourcePath)
+    self.blendSegmentationsTabUI = BlendTabWidget(self.logic, self.resourcePath)
     self.segmentToFantomTabUI = SegmentationToFantomTabWidget(self.logic, self.resourcePath)
     self.ui.generateFantomTab.layout().addWidget(self.generateFantomTabUI.widget)
-    # self.ui.blendSegmentationsTab.layout().addWidget(self.blendSegmentationsTabUI.widget)
+    self.ui.blendSegmentationsTab.layout().addWidget(self.blendSegmentationsTabUI.widget)
     self.ui.segmentToFantomTab.layout().addWidget(self.segmentToFantomTabUI.widget)
 
     # These connections ensure that we update parameter node when scene is closed
@@ -967,3 +1004,11 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     # finished
     return
 
+  def setUpMarkupLines(self) -> None:
+    return
+  
+  def alignNodeUsingMarkupLines(self, nodeToAlign, alignRotation, alignTranslation) -> None:
+    return
+
+  def blendSegmentationNodes(self, node1, node2) -> None:
+    return
