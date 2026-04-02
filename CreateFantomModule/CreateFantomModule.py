@@ -1083,7 +1083,14 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     dstPivot = numpy.array(endMidPoint)
     originToDst = numpy.eye(4)
     originToDst[:3,3] = dstPivot
-    transform = originToDst @ rotationMatrix @ srcToOrigin
+    if alignRotation and alignTranslation:
+      transform = originToDst @ rotationMatrix @ srcToOrigin
+    elif alignRotation:
+      transform = rotationMatrix
+    elif alignTranslation:
+      transform = originToDst @ srcToOrigin
+    else:
+      transform = numpy.eye(4)
     # apply transformation to markup line start points and set them back.
     for idx in range(4):
       posH = numpy.append(startPositions[idx], 1)
