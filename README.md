@@ -3,7 +3,7 @@
 ## Installation instructions
 1. Clone this repository  
 2. Open 3D Slicer  
-3. Under `Edit > Application Settings > Modules  `
+3. Under `Edit > Application Settings > Modules`
 4. Drag and Drop the `CreateFantomModule` folder into `Additional module paths`
 5. The tool will become available under `Wizards > Create Fantom` 
 
