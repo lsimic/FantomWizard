@@ -99,52 +99,89 @@
       <string>Blend</string>
      </property>
      <layout class="QFormLayout" name="formLayout">
-      <item row="0" column="0" colspan="2">
-       <widget class="qMRMLNodeComboBox" name="blendNode1ComboBox">
-        <property name="nodeTypes">
-         <stringlist notr="true">
-          <string>vtkMRMLSegmentationNode</string>
-         </stringlist>
-        </property>
-        <property name="hideChildNodeTypes">
-         <stringlist notr="true"/>
-        </property>
-        <property name="addEnabled">
-         <bool>false</bool>
-        </property>
-        <property name="removeEnabled">
-         <bool>false</bool>
-        </property>
-        <property name="interactionNodeSingletonTag">
-         <string notr="true"/>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="0" colspan="2">
-       <widget class="qMRMLNodeComboBox" name="blendNode2ComboBox">
-        <property name="nodeTypes">
-         <stringlist notr="true">
-          <string>vtkMRMLSegmentationNode</string>
-         </stringlist>
-        </property>
-        <property name="hideChildNodeTypes">
-         <stringlist notr="true"/>
-        </property>
-        <property name="addEnabled">
-         <bool>false</bool>
-        </property>
-        <property name="removeEnabled">
-         <bool>false</bool>
-        </property>
-        <property name="interactionNodeSingletonTag">
-         <string notr="true"/>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="0" colspan="2">
+      <item row="5" column="0" colspan="2">
        <widget class="QPushButton" name="blendButton">
         <property name="text">
          <string>Blend Segmentations</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="blendRadiusLabel">
+        <property name="text">
+         <string>Blend Radius (mm)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="ctkSliderWidget" name="blendRadiusWidget">
+        <property name="minimum">
+         <double>10.000000000000000</double>
+        </property>
+        <property name="maximum">
+         <double>200.000000000000000</double>
+        </property>
+        <property name="value">
+         <double>50.000000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="0">
+       <widget class="QLabel" name="fantomNodeLabel">
+        <property name="text">
+         <string>Fantom Segmentation</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="qMRMLNodeComboBox" name="fantomNodeComboBox">
+        <property name="nodeTypes">
+         <stringlist notr="true">
+          <string>vtkMRMLSegmentationNode</string>
+         </stringlist>
+        </property>
+        <property name="hideChildNodeTypes">
+         <stringlist notr="true"/>
+        </property>
+        <property name="baseName">
+         <string/>
+        </property>
+        <property name="addEnabled">
+         <bool>false</bool>
+        </property>
+        <property name="removeEnabled">
+         <bool>false</bool>
+        </property>
+        <property name="interactionNodeSingletonTag">
+         <string notr="true"/>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="patientNodeLabel">
+        <property name="text">
+         <string>Patient Segmentation</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="qMRMLNodeComboBox" name="patientNodeComboBox">
+        <property name="nodeTypes">
+         <stringlist notr="true">
+          <string>vtkMRMLSegmentationNode</string>
+         </stringlist>
+        </property>
+        <property name="hideChildNodeTypes">
+         <stringlist notr="true"/>
+        </property>
+        <property name="addEnabled">
+         <bool>false</bool>
+        </property>
+        <property name="removeEnabled">
+         <bool>false</bool>
+        </property>
+        <property name="interactionNodeSingletonTag">
+         <string notr="true"/>
         </property>
        </widget>
       </item>
@@ -177,6 +214,11 @@
    <extends>QWidget</extends>
    <header>ctkCollapsibleButton.h</header>
    <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ctkSliderWidget</class>
+   <extends>QWidget</extends>
+   <header>ctkSliderWidget.h</header>
   </customwidget>
   <customwidget>
    <class>qMRMLNodeComboBox</class>

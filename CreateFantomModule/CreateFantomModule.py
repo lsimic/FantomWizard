@@ -340,8 +340,8 @@ class BlendTabWidget:
     self.ui.alignButton.connect("clicked(bool)", self.onAlignButton)
     self.ui.blendButton.connect("clicked(bool)", self.onBlendButton)
     self.ui.alignNodeComboBox.setMRMLScene(slicer.mrmlScene)
-    self.ui.blendNode1ComboBox.setMRMLScene(slicer.mrmlScene)
-    self.ui.blendNode2ComboBox.setMRMLScene(slicer.mrmlScene)
+    self.ui.patientNodeComboBox.setMRMLScene(slicer.mrmlScene)
+    self.ui.fantomNodeComboBox.setMRMLScene(slicer.mrmlScene)
 
   def onGenerateMarkupLinesButton(self) -> None:
     self.logic.setUpMarkupLines()
@@ -357,13 +357,13 @@ class BlendTabWidget:
     self.logic.alignNodeUsingMarkupLines(nodeToAlign, alignRotation, alignTranslation)
 
   def onBlendButton(self) -> None:
-    nodeID1 = self.ui.blendNode1ComboBox.currentNodeID
-    nodeID2 = self.ui.blendNode2ComboBox.currentNodeID
-    node1 = slicer.mrmlScene.GetNodeByID(nodeID1)
-    node2 = slicer.mrmlScene.GetNodeByID(nodeID2)
-    if not (node1 and node2):
+    fantomNodeID = self.ui.fantomNodeComboBox.currentNodeID
+    patientNodeID = self.ui.patientNodeComboBox.currentNodeID
+    fantomNode = slicer.mrmlScene.GetNodeByID(fantomNodeID)
+    patientNode = slicer.mrmlScene.GetNodeByID(patientNodeID)
+    if not (fantomNode and patientNode):
       return
-    self.logic.blendSegmentationNodes(node1, node2)
+    self.logic.blendSegmentationNodes(fantomNode, patientNode)
 
 class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
   """Uses ScriptedLoadableModuleWidget base class, available at:
