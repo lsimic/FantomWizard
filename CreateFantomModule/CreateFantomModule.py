@@ -616,22 +616,27 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     heightFactor, weightFactor = self.computeBlendFactors(trimester, head, height, weight)
     return self.getScaledVtkPolyObjectWithWeights(name, trimester, head, heightFactor, weightFactor)
 
-  def initializeVolumeDataAndVolumeNode(self, volumeNode, volumeData, volumeBounds, voxelSize):
+  def initializeVolumeData(self, volumeData, volumeBounds, voxelSize, fillValue):
     # Compute the bounds of the image (mm), extent (voxels) and volume origin.
     volumeDimensions = []
-    volumeOrigin = []
     for axis in range(0, 3):
       valMin = volumeBounds[2 * axis]
       valMax = volumeBounds[2 * axis + 1]
       size = voxelSize[axis]
       volumeDimensions.append(math.ceil((valMax - valMin) / size))
-      volumeOrigin.append(valMin)
     
     # Allocate image data and fill with background value (-1000 for air)
     volumeData.SetDimensions(volumeDimensions)
     volumeData.AllocateScalars(vtk.VTK_INT, 1)
-    volumeData.GetPointData().GetScalars().Fill(-1000)
+    volumeData.GetPointData().GetScalars().Fill(fillValue)
 
+    return
+
+  def initializeVolumeNode(self, volumeData, volumeBounds, volumeNode):
+    volumeOrigin = []
+    for axis in range(0, 3):
+      valMin = volumeBounds[2 * axis]
+      volumeOrigin.append(valMin)
     # Set up the volume node
     volumeNode.SetOrigin(volumeOrigin)
     volumeNode.SetAndObserveImageData(volumeData)
@@ -657,9 +662,9 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     
     return
   
-  def applyImageStencilToVolume(self, imageData, volumeData, backgroundValue):
+  def applyImageStencilToVolume(self, imageDataMask, volumeData, backgroundValue):
     imageDataToImageStencil = vtk.vtkImageToImageStencil()
-    imageDataToImageStencil.SetInputData(imageData)
+    imageDataToImageStencil.SetInputData(imageDataMask)
     imageDataToImageStencil.ThresholdByUpper(1)
     imageDataToImageStencil.Update()
     imageStencilData = imageDataToImageStencil.GetOutput()
@@ -749,7 +754,8 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       # if this is the first entry, initialize the image
       # the first entry is the soft tissue segmentation and that one is the largest and defines the extent of the image
       if lookupIndex == 0:
-        self.initializeVolumeDataAndVolumeNode(volumeNode, volumeData, vtkPolyObject.GetBounds(), voxelSize)
+        self.initializeVolumeData(volumeData, vtkPolyObject.GetBounds(), voxelSize, -1000)
+        self.initializeVolumeNode(volumeData, vtkPolyObject.GetBounds(), volumeNode)
         print("Requested height: " + str(height) + ". Requested weight: " + str(weight))
         massProperties = vtk.vtkMassProperties()
         massProperties.SetInputData(vtkPolyObject)
@@ -917,13 +923,17 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     slicer.mrmlScene.RemoveNode(cliNode)
 
     return
-
-  def processFromSegmentation(self, segmentation, exportVoxel, exportDicom, exportDir) -> None:
-    # from the segmentation, build a map from segment name -> segment id. 
+  
+  def buildSegmentToIdMap(self, segmentation):
     segmentNameToIdMap = dict()
     for segmentId in segmentation.GetSegmentIDs():
       segment = segmentation.GetSegment(segmentId)
       segmentNameToIdMap[segment.GetName()] = segmentId
+    return segmentNameToIdMap
+
+  def processFromSegmentation(self, segmentation, exportVoxel, exportDicom, exportDir) -> None:
+    # from the segmentation, build a map from segment name -> segment id. 
+    segmentNameToIdMap = self.buildSegmentToIdMap(segmentation)
 
     # Fetch the lookup array that defines the loading order of objects and hu values.
     lookupArray = getLookupArray()
@@ -942,7 +952,8 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     # Create volume data to be used inside the volume node.
     volumeNode = self.createVolumeNode(voxelSize)
     volumeData = vtk.vtkImageData()
-    self.initializeVolumeDataAndVolumeNode(volumeNode, volumeData, bounds, voxelSize)
+    self.initializeVolumeData(volumeData, bounds, voxelSize, -1000)
+    self.initializeVolumeNode(volumeData, bounds, volumeNode)
 
     # iterate over the lookup Array, create volume masks from poly data and build the volume with correct index assigned
     for lookupIndex in range(len(lookupArray)):
