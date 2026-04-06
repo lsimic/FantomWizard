@@ -1,22 +1,56 @@
 # FantomWizard
 
-## Notes
-Tested only with Slicer 5.8.1 on Linux
-
 ## Installation instructions
-Clone this repository  
-Open Slicer  
-Go to Edit - Application Settings - Modules  
-Drag and Drop the "CreateFantomModule" folder into "Additional module paths"  
-The tool should become available under Wizards - Create Fantom  
+1. Clone this repository  
+2. Open 3D Slicer  
+3. Under `Edit > Application Settings > Modules`
+4. Drag and Drop the `CreateFantomModule` folder into `Additional module paths`
+5. The tool will become available under `Wizards > Create Fantom` 
 
 ## Usage Instructions
-1. Select desired trimester  
-2. For second trimester specify fetus orientation  
-3. Specify fantom weight and height  
-4. Specify the voxel size (used for the volume nodes, voxelized format and voxel segmentation)  
-5. Specify what data should be generated
-- Volume Segmentation node - voxel based segmentation  
-- Polydata Segmentation node - mesh based segmentation  
-- Voxelized form - exports the generated fantom in the voxelized format for furhter use  
-6. (If enabled) Specify the output location for the voxelized form  
+
+### Generating a new fantom
+The functionality under the `Generate` tab can be used to create new computational fantoms.
+1. Select the desired trimester
+2. (Optional) In the case of second trimester, specify fetus orientation
+3. Specify fantom weight and height
+4. Specify the voxel size. The same voxel size is used for segmentation, volume, DICOM data and voxelized format export. *Note that small voxel sizes (<1mm) can significantly impact performance.*
+5. Select the tissue types that should be included. The combo box can be used to pick a preset ("Default" or "All"). 
+6. Specify which data should be generated  
+    - Generate Volume Data - a new volume data node will be added to the active Slicer scene. 
+    - Generate Volume Segmentation Node - a new volume segmentation node will be added to the active Slicer scene. Use this option for further processing via Segmentation Blending and export. 
+    - Generate PolyData Segmentation Node - adds the polygon meshes used to generate the fantom as a PolyData segmentation node to the active Slicer scene
+    - Export Voxelized format - exports the generated data in a format suitable for further simulation
+    - Export DICOM - exports the generated fantom volume data in DICOM format
+7. Specify Output path (if exporting DICOM or voxelized format)
+8. Hit "Apply"
+
+### Combining patient specific data and a generated fantom  
+Using the functions under the `Blend` tab, it is possible to combine the two segmentations - patient data and the generated computational fantom segmentation.  
+**Before Proceeding** ensure that the segmentations conform to the expected segmentation names. The segments whose names do not conform will be ignored. The supported segmentations can be found in the [lookup table](CreateFantomModule/Resources/Data/_lookup_table.json)
+1. Create the markup lines. Running the "Create Markup Lines" command will automatically open the markup module. The command will be disabled if the markup lines are already present. Note that it is **imperative** that the markup lines are not deleted or renamed. 
+2. Using the markup module, position the end points of each line in such a way, that the starting point of the line (Patient) is aligned with a certain feature of the Patient segmentation, and that the ending point of the line (Fandom) is aligned with the corresponding feature on the fantom. One way to do this is to Create a closed surface representation of the patient and fantom segmentatiosn and to find and position the appropriate features in the 3D view.  
+*The four selected features should not be co-linear or co-planar, otherwise the alignment may fail.*
+3. Once the lines are positioned, return back to the module. 
+4. Specify whether the alignment should align the rotation and/or translation (both reccomended).
+5. Depending on whether the fantom segmentation should be aligned to the patient, or the patient segmentation aligned to the fantom, select the appropriate segmentation in the combo box, and press "Align Fantom to Patient" or "Align Patient to Fantom". This will run the alignment algorithm and translate/rotate the selected segmentation and markup positions to the appropriate locations. Due to different patient anatomies, it is expected that the alignment will not be 100% perfect. 
+6. Select the two segmentations to be merged from the segmentation dropdowns. It is expected that these will be the segmentations aligned in the previous step. 
+7. Specify the blend radius. 
+8. Hit "Blend Segmentations". This will generate a new segmentation node that can be used to generate the final computational fantom that can be exported and further used. *This step is computationaly expensive and can last several minutes, depending on available system resources and the number of segments present.*
+
+### Creating a volume data/fantom from an existing segmentation
+The functionality under the `Export` tab can be used to generate a computational fantom and volume/dicom data from an existing segmentation.  
+**Before Proceeding** ensure that the segmentations conform to the expected segmentation names. The segments whose names do not conform will be ignored. The supported segmentations can be found in the [lookup table](CreateFantomModule/Resources/Data/_lookup_table.json)
+1. Use the dropdown to select one of the available segmentations in the currently open Slicer scene. The segmentation **must** use binary labelmaps. It is expected (but not necessary) that this segmentation will be generated by blending a real patient segmentation with a fantom segmentation generated by this module.
+2. Specify which data should be generated  
+    - Generate Volume Data - a new volume data node will be added to the active Slicer scene. 
+    - Export Voxelized format - exports the generated data in a format suitable for further simulation
+    - Export DICOM - exports the generated fantom volume data in DICOM format
+7. Specify Output path (if exporting DICOM or voxelized format)
+8. Hit "Apply"
+
+## Reporting issues
+If you encounter issues, please report them using the provided [bug template](https://github.com/lsimic/FantomWizard/issues/new?template=bug_report.md)
+
+## Feature requests
+If you would like the functionality of this plugin to be extended, please use the provided [feature request template](https://github.com/lsimic/FantomWizard/issues/new?template=feature_request.md)

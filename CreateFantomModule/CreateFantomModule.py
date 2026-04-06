@@ -15,6 +15,8 @@ from slicer.parameterNodeWrapper import (
 )
 from slicer import vtkMRMLScalarVolumeNode
 import sys
+import scipy
+import numpy
 
 def getTrimesterHeadString(trimester, head):
   if trimester == 1:
@@ -69,6 +71,14 @@ def ClampValue(val, min, max):
     return max
   return val
 
+def getLookupArray():
+  jsonPath = os.path.dirname(os.path.abspath(__file__))
+  jsonPath = jsonPath + "/Resources/Data/_lookup_table.json"
+  with open(jsonPath) as jsonFile:
+    jsonData = json.load(jsonFile)
+    return jsonData
+  return None
+
 class CreateFantomModule(ScriptedLoadableModule):
   """Uses ScriptedLoadableModule base class, available at:
   https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
@@ -99,6 +109,267 @@ class CreateFantomModuleParameterNode:
   voxelSizeSaggital: Annotated[float, WithinRange(0.2, 2.0)] = 1.0
   voxelSizeCoronal: Annotated[float, WithinRange(0.2, 2.0)] = 1.0
   voxelSizeAxial: Annotated[float, WithinRange(0.2, 2.0)] = 1.0
+
+
+class GenerateFantomTabWidget:
+  def __init__(self, logic, resourcePath):
+    self.logic = logic
+    self.resourcePath = resourcePath
+    self.widget = slicer.util.loadUI(self.resourcePath('UI/GenerateFantomTab.ui'))
+    self.ui = slicer.util.childWidgetVariables(self.widget)
+
+    # Buttons
+    self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
+    self.ui.heightWidget.connect("valueChanged(double)", self.onHeightChange)
+    self.ui.trimesterWidget.connect("valueChanged(double)", self.onTrimesterOrHeadChange)
+    self.ui.headDownCheckBox.connect("stateChanged(int)", self.onTrimesterOrHeadChange)
+    self.ui.exportVoxelizedCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
+    self.ui.exportDicomCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
+    self.ui.generateVolumeDataCheckBox.connect("stateChanged(int)", self.onGenerateVolumeDataChange)
+    self.ui.generatePolyDataSegmentationCheckBox.connect("stateChanged(int)", self.applyButtonEnabling)
+    self.ui.generateVolumeSegmentationCheckBox.connect("stateChanged(int)", self.applyButtonEnabling)
+    self.ui.segmentationListWidget.connect("itemSelectionChanged()", self.applyButtonEnabling)
+    self.ui.segmentationListComboBox.connect("currentIndexChanged(int)", self.segementationComboIndexChange)
+
+    # make sure that the values are in a valid range
+    self.onTrimesterOrHeadChange()
+
+    # make sure that the folder selector is correctly enabled/disabled
+    self.onExportVoxelizedOrDicomChange()
+
+    # build segmentation list. 
+    lookupArray = getLookupArray()
+    for lookupEntry in lookupArray:
+      id = lookupEntry["id"]
+      self.ui.segmentationListWidget.addItem(id)
+
+    # default selection for segmentation list
+    self.initSegmentationPresetComboBox()
+    defaultId = self.ui.segmentationListComboBox.findText("Default")
+    self.ui.segmentationListComboBox.setCurrentIndex(defaultId)
+    self.setSelectedSegmentationsFromPreset("Default")
+
+    # make sure that the apply button has correct enabling state on init
+    self.applyButtonEnabling() 
+
+  def onTrimesterOrHeadChange(self) -> None:
+    # if trimester changes, this can change the height range
+    # validate that the height is within the supported range and clamp if required. 
+    trimester = self.ui.trimesterWidget.value
+    headDown = self.ui.headDownCheckBox.checked
+    minHeight, maxHeight = GetHeightRangeFromLookupTable(trimester, headDown)
+    self.ui.heightWidget.minimum = minHeight
+    self.ui.heightWidget.maximum = maxHeight
+    if self.ui.heightWidget.value < minHeight:
+      self.ui.heightWidget.value = minHeight
+    if self.ui.heightWidget.value > maxHeight:
+      self.ui.heightWidget.value = maxHeight
+
+    # enable head down checkbox only in second trimester.
+    if trimester == 2:
+      self.ui.headDownCheckBox.setEnabled(True)
+    else:
+      self.ui.headDownCheckBox.setDisabled(True)
+
+    # if the height changed, validate that the weight is in correct range.
+    self.onHeightChange()
+
+    return
+  
+  def onHeightChange(self) -> None:
+    # if height changes, this changes the weight range.
+    # validate that the weight is now within the supported range and clamp if required.
+    height = self.ui.heightWidget.value
+    trimester = self.ui.trimesterWidget.value
+    head = self.ui.headDownCheckBox.checked
+    minWeight, maxWeight = GetWeightRangeFromLookupTable(trimester, head, height)
+    self.ui.weightWidget.minimum = minWeight
+    self.ui.weightWidget.maximum = maxWeight
+    if self.ui.weightWidget.value < minWeight:
+      self.ui.weightWidget.value = minWeight
+    if self.ui.weightWidget.value > maxWeight:
+      self.ui.weightWidget.value = maxWeight
+
+    return
+
+  def onApplyButton(self) -> None:
+    """Run processing when user clicks "Apply" button."""
+    with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
+      # Compute output
+      trimester = self.ui.trimesterWidget.value
+      head = self.ui.headDownCheckBox.checked
+      height = self.ui.heightWidget.value
+      weight = self.ui.weightWidget.value
+      voxelSize = []
+      voxelSize.append(self.ui.voxelSizeSaggitalWidget.value)
+      voxelSize.append(self.ui.voxelSizeCoronalWidget.value)
+      voxelSize.append(self.ui.voxelSizeAxialWidget.value)
+
+      doPolyDataSegmentation = self.ui.generatePolyDataSegmentationCheckBox.checked
+      doVolumeSegmentation = self.ui.generateVolumeSegmentationCheckBox.checked
+      exportVoxelized = self.ui.exportVoxelizedCheckBox.checked
+      exportDicom = self.ui.exportDicomCheckBox.checked
+      exportVoxelizedDir = self.ui.exportVoxelizedDirectory.directory
+      volumeEnabled = self.ui.generateVolumeDataCheckBox.checked
+      selectedSegmentations = []
+      for item in self.ui.segmentationListWidget.selectedItems():
+        selectedSegmentations.append(item.text())
+      self.logic.process(trimester, head, height, weight, voxelSize, selectedSegmentations, volumeEnabled, doPolyDataSegmentation, doVolumeSegmentation, exportVoxelized, exportDicom, exportVoxelizedDir)
+
+  def onExportVoxelizedOrDicomChange(self) -> None:
+    volumeEnabled = self.ui.generateVolumeDataCheckBox.checked
+    exportVoxelizedEnabled = self.ui.exportVoxelizedCheckBox.checked
+    exportDicomEnabled = self.ui.exportDicomCheckBox.checked
+    self.ui.exportVoxelizedDirectory.enabled = (exportVoxelizedEnabled or exportDicomEnabled) and volumeEnabled
+
+  def onGenerateVolumeDataChange(self) -> None:
+    # when we disable generating volume data, disable the checkboxes for voxelized and dicom export.
+    if self.ui.generateVolumeDataCheckBox.checked:
+      self.ui.exportVoxelizedCheckBox.setEnabled(True)
+      self.ui.exportDicomCheckBox.setEnabled(True)
+    else:
+      self.ui.exportVoxelizedCheckBox.setDisabled(True)
+      self.ui.exportDicomCheckBox.setDisabled(True)
+    self.onExportVoxelizedOrDicomChange()
+    self.applyButtonEnabling()
+
+  def applyButtonEnabling(self) -> None:
+    hasSelected = len(self.ui.segmentationListWidget.selectedItems()) > 0
+    volumeEnabled = self.ui.generateVolumeDataCheckBox.checked
+    segmentationEnabled = self.ui.generatePolyDataSegmentationCheckBox.checked or self.ui.generateVolumeSegmentationCheckBox.checked
+    applyEnabled = hasSelected and (volumeEnabled or segmentationEnabled)
+    if applyEnabled:
+      self.ui.applyButton.setEnabled(True)
+    else:
+      self.ui.applyButton.setDisabled(True)
+
+  def setSelectedSegmentationsFromPreset(self, presetName) -> None:
+    jsonPath = os.path.dirname(os.path.abspath(__file__))
+    jsonPath = jsonPath + "/Resources/Data/SegmentationPresets/" + presetName + ".json"
+    with open(jsonPath) as jsonFile:
+      selectedSegmentations = json.load(jsonFile)
+      for index in range(self.ui.segmentationListWidget.count):
+        item = self.ui.segmentationListWidget.item(index)
+        item.setSelected(item.text() in selectedSegmentations)
+
+  def initSegmentationPresetComboBox(self) -> None:
+    combobox = self.ui.segmentationListComboBox
+    presetsDir = os.path.dirname(os.path.abspath(__file__))
+    presetsDir += "/Resources/Data/SegmentationPresets"
+    for item in os.listdir(presetsDir):
+      if item.endswith(".json"):
+        combobox.addItem(item[:-5])
+
+  def segementationComboIndexChange(self, index) -> None:
+    text = self.ui.segmentationListComboBox.itemText(index)
+    self.setSelectedSegmentationsFromPreset(text)
+
+
+class SegmentationToFantomTabWidget:
+  def __init__(self, logic, resourcePath):
+    self.logic = logic
+    self.resourcePath = resourcePath
+    self.widget = slicer.util.loadUI(self.resourcePath('UI/SegmentationToFantomTab.ui'))
+    self.ui = slicer.util.childWidgetVariables(self.widget)
+
+    # Buttons
+    self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
+    self.ui.exportVoxelizedCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
+    self.ui.exportDicomCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
+    self.ui.generateVolumeDataCheckBox.connect("stateChanged(int)", self.onGenerateVolumeDataChange)
+    self.ui.segmentationNodeComboBox.setMRMLScene(slicer.mrmlScene)
+    self.ui.segmentationNodeComboBox.connect("currentNodeChanged(bool)", self.onSegmentationNodeComboBoxChange)
+
+    # make sure that the folder selector is correctly enabled/disabled
+    self.onExportVoxelizedOrDicomChange()
+
+    # make sure that the apply button has correct enabling state on init
+    self.applyButtonEnabling() 
+
+  def onApplyButton(self) -> None:
+    """Run processing when user clicks "Apply" button."""
+    with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
+      # Compute output
+      exportVoxelized = self.ui.exportVoxelizedCheckBox.checked
+      exportDicom = self.ui.exportDicomCheckBox.checked
+      exportVoxelizedDir = self.ui.exportVoxelizedDirectory.directory
+      currentNodeID = self.ui.segmentationNodeComboBox.currentNodeID
+      currentNode = slicer.mrmlScene.GetNodeByID(currentNodeID)
+      segmentation = currentNode.GetSegmentation()
+
+      self.logic.processFromSegmentation(segmentation, exportVoxelized, exportDicom, exportVoxelizedDir) 
+
+  def onExportVoxelizedOrDicomChange(self) -> None:
+    volumeEnabled = self.ui.generateVolumeDataCheckBox.checked
+    exportVoxelizedEnabled = self.ui.exportVoxelizedCheckBox.checked
+    exportDicomEnabled = self.ui.exportDicomCheckBox.checked
+    self.ui.exportVoxelizedDirectory.enabled = (exportVoxelizedEnabled or exportDicomEnabled) and volumeEnabled
+
+  def onGenerateVolumeDataChange(self) -> None:
+    # when we disable generating volume data, disable the checkboxes for voxelized and dicom export.
+    if self.ui.generateVolumeDataCheckBox.checked:
+      self.ui.exportVoxelizedCheckBox.setEnabled(True)
+      self.ui.exportDicomCheckBox.setEnabled(True)
+    else:
+      self.ui.exportVoxelizedCheckBox.setDisabled(True)
+      self.ui.exportDicomCheckBox.setDisabled(True)
+    self.onExportVoxelizedOrDicomChange()
+    self.applyButtonEnabling()
+
+  def onSegmentationNodeComboBoxChange(self, isValidNode) -> None:
+    self.applyButtonEnabling()
+  
+  def applyButtonEnabling(self) -> None:
+    applyEnabled = self.ui.generateVolumeDataCheckBox.checked
+    currentNode = self.ui.segmentationNodeComboBox.currentNodeID
+    if applyEnabled and currentNode:
+      self.ui.applyButton.setEnabled(True)
+    else:
+      self.ui.applyButton.setDisabled(True)
+
+
+class BlendTabWidget:
+  def __init__(self, logic, resourcePath):
+    self.logic = logic
+    self.resourcePath = resourcePath
+    self.widget = slicer.util.loadUI(self.resourcePath('UI/BlendSegmentationsTab.ui'))
+    self.ui = slicer.util.childWidgetVariables(self.widget)
+
+    # Buttons
+    self.ui.generateMarkupLinesButton.connect("clicked(bool)", self.onGenerateMarkupLinesButton)
+    self.ui.alignFantomButton.connect("clicked(bool)", lambda: self.onAlignButton(True))
+    self.ui.alignPatientButton.connect("clicked(bool)", lambda: self.onAlignButton(False))
+    self.ui.blendButton.connect("clicked(bool)", self.onBlendButton)
+    self.ui.alignNodeFantomComboBox.setMRMLScene(slicer.mrmlScene)
+    self.ui.alignNodePatientComboBox.setMRMLScene(slicer.mrmlScene)
+    self.ui.patientNodeComboBox.setMRMLScene(slicer.mrmlScene)
+    self.ui.fantomNodeComboBox.setMRMLScene(slicer.mrmlScene)
+
+  def onGenerateMarkupLinesButton(self) -> None:
+    self.logic.setUpMarkupLines()
+
+  def onAlignButton(self, fantomToPatient) -> None:
+    alignRotation = self.ui.alignRotationCheckBox.checked
+    alignTranslation = self.ui.alignTranslationCheckBox.checked
+    if fantomToPatient:
+      nodeToAlignID = self.ui.alignNodeFantomComboBox.currentNodeID
+    else:
+      nodeToAlignID = self.ui.alignNodePatientComboBox.currentNodeID
+    nodeToAlign = slicer.mrmlScene.GetNodeByID(nodeToAlignID)
+    somethingToAlign = alignTranslation or alignRotation
+    if not (somethingToAlign or nodeToAlign):
+      return
+    self.logic.alignNodeUsingMarkupLines(nodeToAlign, alignRotation, alignTranslation, fantomToPatient)
+
+  def onBlendButton(self) -> None:
+    fantomNodeID = self.ui.fantomNodeComboBox.currentNodeID
+    patientNodeID = self.ui.patientNodeComboBox.currentNodeID
+    fantomNode = slicer.mrmlScene.GetNodeByID(fantomNodeID)
+    patientNode = slicer.mrmlScene.GetNodeByID(patientNodeID)
+    if not (fantomNode and patientNode):
+      return
+    rad = self.ui.blendRadiusWidget.value
+    self.logic.blendSegmentationNodes(fantomNode, patientNode, rad)
 
 class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
   """Uses ScriptedLoadableModuleWidget base class, available at:
@@ -132,28 +403,20 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     # in batch mode, without a graphical user interface.
     self.logic = CreateFantomModuleLogic()
 
-    # Connections
+    # Make sure parameter node is initialized (needed for module reload)
+    self.initializeParameterNode()
+
+    # Create tab widgets, inject into tabs
+    self.generateFantomTabUI = GenerateFantomTabWidget(self.logic, self.resourcePath)
+    self.blendSegmentationsTabUI = BlendTabWidget(self.logic, self.resourcePath)
+    self.segmentToFantomTabUI = SegmentationToFantomTabWidget(self.logic, self.resourcePath)
+    self.ui.generateFantomTab.layout().addWidget(self.generateFantomTabUI.widget)
+    self.ui.blendSegmentationsTab.layout().addWidget(self.blendSegmentationsTabUI.widget)
+    self.ui.segmentToFantomTab.layout().addWidget(self.segmentToFantomTabUI.widget)
 
     # These connections ensure that we update parameter node when scene is closed
     self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
     self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
-
-    # Buttons
-    self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
-    self.ui.heightWidget.connect("valueChanged(double)", self.onHeightChange)
-    self.ui.trimesterWidget.connect("valueChanged(int)", self.onTrimesterOrHeadChange)
-    self.ui.headDownCheckBox.connect("stateChanged(int)", self.onTrimesterOrHeadChange)
-    self.ui.exportVoxelizedCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
-    self.ui.exportDicomCheckBox.connect("stateChanged(int)", self.onExportVoxelizedOrDicomChange)
-
-    # make sure that the values are in a valid range
-    self.onTrimesterOrHeadChange()
-
-    # Make sure parameter node is initialized (needed for module reload)
-    self.initializeParameterNode()
-
-    # make sure that the folder selector is correctly enabled/disabled
-    self.onExportVoxelizedOrDicomChange()
 
   def cleanup(self) -> None:
     """Called when the application closes and the module widget is destroyed."""
@@ -203,65 +466,6 @@ class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
       # ui element that needs connection.
       self._parameterNodeGuiTag = self._parameterNode.connectGui(self.ui)
 
-  def onTrimesterOrHeadChange(self) -> None:
-    # if trimester changes, this can change the height range
-    # validate that the height is within the supported range and clamp if required. 
-    trimester = self.ui.trimesterWidget.value
-    headDown = self.ui.headDownCheckBox.checked
-    minHeight, maxHeight = GetHeightRangeFromLookupTable(trimester, headDown)
-    self.ui.heightWidget.minimum = minHeight
-    self.ui.heightWidget.maximum = maxHeight
-    if self.ui.heightWidget.value < minHeight:
-      self.ui.heightWidget.value = minHeight
-    if self.ui.heightWidget.value > maxHeight:
-      self.ui.heightWidget.value = maxHeight
-
-    # if the height changed, validate that the weight is in correct range.
-    self.onHeightChange()
-
-    return
-  
-  def onHeightChange(self) -> None:
-    # if height changes, this changes the weight range.
-    # validate that the weight is now within the supported range and clamp if required.
-    height = self.ui.heightWidget.value
-    trimester = self.ui.trimesterWidget.value
-    head = self.ui.headDownCheckBox.checked
-    minWeight, maxWeight = GetWeightRangeFromLookupTable(trimester, head, height)
-    self.ui.weightWidget.minimum = minWeight
-    self.ui.weightWidget.maximum = maxWeight
-    if self.ui.weightWidget.value < minWeight:
-      self.ui.weightWidget.value = minWeight
-    if self.ui.weightWidget.value > maxWeight:
-      self.ui.weightWidget.value = maxWeight
-
-    return
-
-  def onApplyButton(self) -> None:
-    """Run processing when user clicks "Apply" button."""
-    with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
-      # Compute output
-      trimester = self.ui.trimesterWidget.value
-      head = self.ui.headDownCheckBox.checked
-      height = self.ui.heightWidget.value
-      weight = self.ui.weightWidget.value
-      voxelSize = []
-      voxelSize.append(self.ui.voxelSizeSaggitalWidget.value)
-      voxelSize.append(self.ui.voxelSizeCoronalWidget.value)
-      voxelSize.append(self.ui.voxelSizeAxialWidget.value)
-
-      doPolyDataSegmentation = self.ui.generatePolyDataSegmentationCheckBox.checked
-      doVolumeSegmentation = self.ui.generateVolumeSegmentationCheckBox.checked
-      exportVoxelized = self.ui.exportVoxelizedCheckBox.checked
-      exportDicom = self.ui.exportDicomCheckBox.checked
-      exportVoxelizedDir = self.ui.exportVoxelizedDirectory.directory
-      self.logic.process(trimester, head, height, weight, voxelSize, doPolyDataSegmentation, doVolumeSegmentation, exportVoxelized, exportDicom, exportVoxelizedDir)
-
-  def onExportVoxelizedOrDicomChange(self) -> None:
-    exportVoxelizedEnabled = self.ui.exportVoxelizedCheckBox.checked
-    exportDicomEnabled = self.ui.exportDicomCheckBox.checked
-    self.ui.exportVoxelizedDirectory.enabled = exportVoxelizedEnabled or exportDicomEnabled
-  
 
 class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
   """This class should implement all the actual
@@ -302,14 +506,6 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     segmentationNode.CreateDefaultDisplayNodes()
     segmentationNode.SetSourceRepresentationToClosedSurface()
     return segmentationNode
-  
-  def getLookupArray(self, trimester, head):
-    jsonPath = os.path.dirname(os.path.abspath(__file__))
-    jsonPath = jsonPath + "/Resources/Data/_lookup_table.json"
-    with open(jsonPath) as jsonFile:
-      jsonData = json.load(jsonFile)
-      return jsonData
-    return None
 
   def readVtkPolyObjectFromGltf(self, gltfPath):
     reader = vtk.vtkGLTFReader() 
@@ -426,24 +622,27 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     heightFactor, weightFactor = self.computeBlendFactors(trimester, head, height, weight)
     return self.getScaledVtkPolyObjectWithWeights(name, trimester, head, heightFactor, weightFactor)
 
-  def initializeVolumeDataAndVolumeNode(self, volumeNode, volumeData, vtkPolyObject, voxelSize):
-    volumeBounds = vtkPolyObject.GetBounds() # (xmin, xmax, ymin, ymax, zmin, zmax), in mm
-
+  def initializeVolumeData(self, volumeData, volumeBounds, voxelSize, fillValue):
     # Compute the bounds of the image (mm), extent (voxels) and volume origin.
     volumeDimensions = []
-    volumeOrigin = []
     for axis in range(0, 3):
       valMin = volumeBounds[2 * axis]
       valMax = volumeBounds[2 * axis + 1]
       size = voxelSize[axis]
-      volumeDimensions.append(math.ceil((valMax - valMin) / size) + 4) # include small padding
-      volumeOrigin.append(valMin)
+      volumeDimensions.append(math.ceil((valMax - valMin) / size))
     
     # Allocate image data and fill with background value (-1000 for air)
     volumeData.SetDimensions(volumeDimensions)
     volumeData.AllocateScalars(vtk.VTK_INT, 1)
-    volumeData.GetPointData().GetScalars().Fill(-1000)
+    volumeData.GetPointData().GetScalars().Fill(fillValue)
 
+    return
+
+  def initializeVolumeNode(self, volumeData, volumeBounds, volumeNode):
+    volumeOrigin = []
+    for axis in range(0, 3):
+      valMin = volumeBounds[2 * axis]
+      volumeOrigin.append(valMin)
     # Set up the volume node
     volumeNode.SetOrigin(volumeOrigin)
     volumeNode.SetAndObserveImageData(volumeData)
@@ -468,6 +667,22 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     imageStencil.Update()
     
     return
+  
+  def applyImageStencilToVolume(self, imageDataMask, volumeData, backgroundValue):
+    imageDataToImageStencil = vtk.vtkImageToImageStencil()
+    imageDataToImageStencil.SetInputData(imageDataMask)
+    imageDataToImageStencil.ThresholdByUpper(1)
+    imageDataToImageStencil.Update()
+    imageStencilData = imageDataToImageStencil.GetOutput()
+
+    imageStencil = vtk.vtkImageStencil()
+    imageStencil.SetStencilData(imageStencilData)
+    imageStencil.ReverseStencilOn()
+    imageStencil.SetBackgroundValue(backgroundValue)
+    imageStencil.SetInputData(volumeData)
+    imageStencil.SetOutput(volumeData)
+    imageStencil.Update()
+    
   
   def createVolumeSegmentationNode(self):
     segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
@@ -495,7 +710,17 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
 
     return
 
-  def process(self, trimester, head, height, weight, voxelSize, doPolySegmentation, doVolumeSegmentation, exportVoxel, exportDicom, exportVoxelDir) -> None:
+  def process(self, trimester, head, height, weight, voxelSize, selectedSegmentationIds, createVolumeData, doPolySegmentation, doVolumeSegmentation, exportVoxel, exportDicom, exportVoxelDir) -> None:
+    if not createVolumeData:
+      exportVoxel = False
+      exportDicom = False
+
+    if len(selectedSegmentationIds) < 0:
+      return
+    
+    # note that, even if we don't generate the volume node itself, it is still necessary to generate the masks for segmentations
+    # in order for the volume data segmentation to be generated. 
+
     # Create a new volume node to display the generated CT image.
     volumeNode = self.createVolumeNode(voxelSize)
     # Create volume data to be used inside the volume node.
@@ -508,7 +733,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       segmentationPolyDataNode = None
 
     # Fetch the lookup array that defines the loading order of objects and hu values.
-    lookupArray = self.getLookupArray(trimester, head)
+    lookupArray = getLookupArray()
 
     # create a progress dialog because the execution can take a while...
     progressDialog = slicer.util.createProgressDialog(parent = None, value = 0, maximum = 2 * len(lookupArray))
@@ -516,6 +741,10 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     # iterate over the lookup Array, create volume masks from poly data and build the volume with correct index assigned
     for lookupIndex in range(len(lookupArray)):
       lookupEntry = lookupArray[lookupIndex]
+
+      # only allow segmentation ids that are selected.
+      if not lookupEntry["id"] in selectedSegmentationIds:
+        continue 
       
       # set progress dialog value
       progressDialog.setValue(lookupIndex)
@@ -531,7 +760,8 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       # if this is the first entry, initialize the image
       # the first entry is the soft tissue segmentation and that one is the largest and defines the extent of the image
       if lookupIndex == 0:
-        self.initializeVolumeDataAndVolumeNode(volumeNode, volumeData, vtkPolyObject, voxelSize)
+        self.initializeVolumeData(volumeData, vtkPolyObject.GetBounds(), voxelSize, -1000)
+        self.initializeVolumeNode(volumeData, vtkPolyObject.GetBounds(), volumeNode)
         print("Requested height: " + str(height) + ". Requested weight: " + str(weight))
         massProperties = vtk.vtkMassProperties()
         massProperties.SetInputData(vtkPolyObject)
@@ -564,6 +794,10 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     for lookupIndex in range(len(lookupArray)):
       lookupEntry = lookupArray[lookupIndex]
 
+      # only allow segmentation ids that are selected.
+      if not lookupEntry["id"] in selectedSegmentationIds:
+        continue 
+
       # set progress dialog value
       progressDialog.setValue(len(lookupArray) + lookupIndex)
       progressDialog.setLabelText("Processing " + lookupEntry["id"])
@@ -579,7 +813,8 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       imageStencilData = self.thresholdImage(volumeData, valueInVolumeNode)
       
       # apply the image stencil to the volume data, in order to set the final, correct HU value.
-      self.replaceDataUsingStencil(volumeData, imageStencilData, currentHUValue)
+      if createVolumeData:
+        self.replaceDataUsingStencil(volumeData, imageStencilData, currentHUValue)
 
       if doVolumeSegmentation:
         # add binary label map to segmentation and fill it using the stencil
@@ -598,6 +833,10 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     # export dicom if enabled.
     if exportDicom:
       self.exportDicom(exportVoxelDir, fileIndex, volumeNode, progressDialog)
+
+    # delete the volume node if it's not required
+    if not createVolumeData:
+      slicer.mrmlScene.RemoveNode(volumeNode)
 
     # close the progress dialog
     progressDialog.close()
@@ -689,4 +928,457 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     cliNode = slicer.cli.runSync(dicomSeriesModule, None, parameters)
     slicer.mrmlScene.RemoveNode(cliNode)
 
+    return
+  
+  def buildSegmentToIdMap(self, segmentation):
+    segmentNameToIdMap = dict()
+    for segmentId in segmentation.GetSegmentIDs():
+      segment = segmentation.GetSegment(segmentId)
+      segmentNameToIdMap[segment.GetName()] = segmentId
+    return segmentNameToIdMap
+
+  def processFromSegmentation(self, segmentation, exportVoxel, exportDicom, exportDir) -> None:
+    # from the segmentation, build a map from segment name -> segment id. 
+    segmentNameToIdMap = self.buildSegmentToIdMap(segmentation)
+
+    # Fetch the lookup array that defines the loading order of objects and hu values.
+    lookupArray = getLookupArray()
+
+    # get the soft tissue imagedata. 
+    # use the soft tissues segment as a reference volume.
+    lableMapName = slicer.vtkSegmentationConverter.GetSegmentationBinaryLabelmapRepresentationName()
+    softTissueImageData = segmentation.GetSegment(segmentNameToIdMap["soft_tissues"]).GetRepresentation(lableMapName)
+    voxelSize = softTissueImageData.GetSpacing()
+    bounds = softTissueImageData.GetBounds()
+
+    # create a progress dialog because the execution can take a while...
+    progressDialog = slicer.util.createProgressDialog(parent = None, value = 0, maximum = 2 * len(lookupArray))
+
+    # create volume node and volume data
+    # Create volume data to be used inside the volume node.
+    volumeNode = self.createVolumeNode(voxelSize)
+    volumeData = vtk.vtkImageData()
+    self.initializeVolumeData(volumeData, bounds, voxelSize, -1000)
+    self.initializeVolumeNode(volumeData, bounds, volumeNode)
+
+    # iterate over the lookup Array, create volume masks from poly data and build the volume with correct index assigned
+    for lookupIndex in range(len(lookupArray)):
+      lookupEntry = lookupArray[lookupIndex]
+      # only allow segmentation ids that are available are processed
+      if not lookupEntry["id"] in segmentNameToIdMap:
+        continue 
+      # get segmentation.
+      currentSegmentationVolumeData = segmentation.GetSegment(segmentNameToIdMap[lookupEntry["id"]]).GetRepresentation(lableMapName)
+      if currentSegmentationVolumeData is None:
+        continue
+
+      # set progress dialog value
+      progressDialog.setValue(lookupIndex)
+      progressDialog.setLabelText("Processing " + lookupEntry["id"])
+      slicer.app.processEvents()
+                 
+      # apply image as stencil
+      self.applyImageStencilToVolume(currentSegmentationVolumeData, volumeData, 10000 + lookupIndex)
+
+    fileIndex = 0
+    if exportDicom or exportVoxel:
+      fileIndex = self.getFileIndex(exportDir)
+
+    # if enabled, export to voxelized format
+    if exportVoxel:
+      self.exportVoxelized(exportDir, fileIndex, lookupArray, 10000, volumeData, voxelSize, progressDialog)
+
+    # make the volume with appropriate segmentation ids
+    for lookupIndex in range(len(lookupArray)):
+      lookupEntry = lookupArray[lookupIndex]
+
+      # only allow segmentation ids that are selected.
+      if not lookupEntry["id"] in segmentNameToIdMap:
+        continue 
+
+      # set progress dialog value
+      progressDialog.setValue(len(lookupArray) + lookupIndex)
+      progressDialog.setLabelText("Processing " + lookupEntry["id"])
+      slicer.app.processEvents()
+
+      # this is the current value in volume node, offset by 10000 to avoid overlap between index and hu value.
+      valueInVolumeNode = 10000 + lookupIndex
+
+      # compute the hu value as just the average of min/max
+      currentHUValue = 0.5 * (lookupEntry["hu_min"] + lookupEntry["hu_max"])
+
+      # create the image stencil by thresholding the volume data with the current value in volume node.
+      imageStencilData = self.thresholdImage(volumeData, valueInVolumeNode)
+      
+      # apply the image stencil to the volume data, in order to set the final, correct HU value.
+      self.replaceDataUsingStencil(volumeData, imageStencilData, currentHUValue)
+
+    # export dicom if enabled.
+    if exportDicom:
+      self.exportDicom(exportDir, fileIndex, volumeNode, progressDialog)
+
+    # close the progress dialog
+    progressDialog.close()
+    
+    # finished
+    return
+
+  def setUpMarkupLines(self) -> None:
+    for lineIdx in range(4):
+      markupLineName = "FantomLine" + str(lineIdx)
+      itemList = slicer.mrmlScene.GetNodesByName(markupLineName)
+      if itemList.GetNumberOfItems() > 0:
+        lineNode = itemList.GetItemAsObject(0)
+      else:
+        lineNode = slicer.modules.markups.logic().AddNewMarkupsNode("vtkMRMLMarkupsLineNode", markupLineName)
+        lineNode.CreateDefaultDisplayNodes()
+      # display settings
+      displayNode = lineNode.GetDisplayNode()
+      displayNode.SetGlyphTypeFromString("CrossDot2D")
+      displayNode.SetPropertiesLabelVisibility(False)
+      displayNode.SetPointLabelsVisibility(True)
+      displayNode.SetOccludedVisibility(True)
+      displayNode.SetSliceProjection(True)
+      # set some reasonable default coordinates for line end points (RAS)
+      coordR = 50 if lineIdx & 1 else -50
+      coordA = 50 if lineIdx & 2 else -50
+      lineNode.SetLineStartPosition((coordR, coordA, 100))
+      lineNode.SetLineEndPosition((coordR, coordA, 0))
+      # start, end point labels
+      lineNode.SetNthControlPointLabel(0, str(lineIdx) + " Patient")
+      lineNode.SetNthControlPointLabel(1, str(lineIdx) + " Fantom")
+    # switch to markups module to edit the lines.
+    slicer.util.selectModule("Markups")
+  
+  def alignNodeUsingMarkupLines(self, nodeToAlign, alignRotation, alignTranslation, fantomToPatient) -> None:
+    # gather the markup lines and their start/end positions 
+    startPositions = []
+    endPositions = []
+    lineNodes = []
+    for lineIdx in range(4):
+      markupLineName = "FantomLine" + str(lineIdx)
+      itemList = slicer.mrmlScene.GetNodesByName(markupLineName)
+      if itemList.GetNumberOfItems() < 1:
+        return
+      lineNode = itemList.GetItemAsObject(0)
+      startPositions.append(numpy.array(lineNode.GetLineStartPosition()))
+      endPositions.append(numpy.array(lineNode.GetLineEndPosition()))
+      lineNodes.append(lineNode)
+
+    # if aligning fantom to patient, swap start, end
+    if fantomToPatient:
+      startPositions, endPositions = endPositions, startPositions
+    
+    # kabsch algorithm to construct the transform matrix
+    # compute the translation matrix part
+    startMidPoint = startPositions[0]
+    endMidPoint = endPositions[0]
+    for idx in range(1, 4):
+      startMidPoint = startMidPoint + startPositions[idx]
+      endMidPoint = endMidPoint + endPositions[idx]
+    startMidPoint = 0.25 * startMidPoint
+    endMidPoint = 0.25 * endMidPoint
+    # move points to origin
+    # compute sum of lengths of each point-origin
+    startLen = 0.0
+    endLen = 0.0
+    startPositionsOrigin = []
+    endPositionsOrigin = []
+    for idx in range(4):
+      startPositionsOrigin.append(startPositions[idx] - startMidPoint)
+      endPositionsOrigin.append(endPositions[idx] - endMidPoint)
+      startLen = startLen + numpy.linalg.norm(startPositions[idx])
+      endLen = endLen + numpy.linalg.norm(endPositions[idx])
+    # scale. scale factor is computed by summing up the distances from point to origin. 
+    scaleFac = endLen / startLen
+    for idx in range(4):
+      startPositionsOrigin[idx] = scaleFac * startPositions[idx]
+    # kabsch algorithm to compute the rotation part
+    alignRes = scipy.spatial.transform.Rotation.align_vectors(endPositionsOrigin, startPositionsOrigin)
+    # final transformation matrix
+    rotationMatrix = numpy.eye(4)
+    rotationMatrix[:3, :3] = alignRes[0].as_matrix()
+    srcPivot = numpy.array(startMidPoint)
+    srcToOrigin = numpy.eye(4)
+    srcToOrigin[:3,3] = -srcPivot
+    dstPivot = numpy.array(endMidPoint)
+    originToDst = numpy.eye(4)
+    originToDst[:3,3] = dstPivot
+    if alignRotation and alignTranslation:
+      transform = originToDst @ rotationMatrix @ srcToOrigin
+    elif alignRotation:
+      transform = rotationMatrix
+    elif alignTranslation:
+      transform = originToDst @ srcToOrigin
+    else:
+      transform = numpy.eye(4)
+    # apply transformation to markup line start points and set them back.
+    for idx in range(4):
+      posH = numpy.append(startPositions[idx], 1)
+      posH = transform @ posH
+      startPositions[idx] = posH[:3] / posH[3]
+      if fantomToPatient:
+        lineNodes[idx].SetLineEndPosition(startPositions[idx])
+      else:
+        lineNodes[idx].SetLineStartPosition(startPositions[idx])
+    # apply transformation to segmentation node
+    vtkTrans = vtk.vtkTransform()
+    vtkMat = slicer.util.vtkMatrixFromArray(transform)
+    vtkTrans.SetMatrix(vtkMat)
+    nodeToAlign.ApplyTransform(vtkTrans)
+    nodeToAlign.GetDisplayNode().Modified()
+    return
+  
+  def computeSegmentationNodeBounds(self, node):
+    maxBounds = []
+    segmentation = node.GetSegmentation()
+    for segmentIdx in range(segmentation.GetNumberOfSegments()):
+      segment = segmentation.GetNthSegment(segmentIdx)
+      currentBounds = [0, 0, 0, 0, 0, 0]
+      segment.GetBounds(currentBounds)
+      if len(maxBounds) < 1:
+        for item in currentBounds:
+          maxBounds.append(item)
+      else:
+        for i in [0, 2, 4]:
+          maxBounds[i] = min(maxBounds[i], currentBounds[i])
+        for i in [1, 3, 5]:
+          maxBounds[i] = max(maxBounds[i], currentBounds[i])
+    return maxBounds
+  
+  def computeMinSpacing(self, fantomNode, patientNode):
+    lableMapName = slicer.vtkSegmentationConverter.GetSegmentationBinaryLabelmapRepresentationName()
+    minSpacing = []
+    for segmentationNode in [fantomNode, patientNode]:
+      segmentation = segmentationNode.GetSegmentation()
+      for segmentIdx in range(segmentation.GetNumberOfSegments()):
+        segment = segmentation.GetNthSegment(segmentIdx)
+        imageData = segment.GetRepresentation(lableMapName)
+        voxelSize = imageData.GetSpacing()
+        if len(minSpacing) < 1:
+          for item in voxelSize:
+            minSpacing.append(item)
+        else:
+          for i in range(3):
+            minSpacing[i] = min(minSpacing[i], voxelSize[i])
+    return minSpacing
+
+  def makeSegmentationLabelmapNode(self, segmentationNode, referenceVolumeNode):
+    segmentationLabelmapNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
+    slicer.modules.segmentations.logic().ExportSegmentsToLabelmapNode(
+      segmentationNode,
+      segmentationNode.GetSegmentation().GetSegmentIDs(),
+      segmentationLabelmapNode,
+      referenceVolumeNode
+    )
+    return segmentationLabelmapNode
+
+  def getLabelMapNameToIndexMap(self, segmentationNode):
+    labelNameToIndex = dict()
+    segmentation = segmentationNode.GetSegmentation()
+    for segmentIdx in range(segmentation.GetNumberOfSegments()):
+      segment = segmentation.GetNthSegment(segmentIdx)
+      labelNameToIndex[segment.GetName()] = segmentIdx + 1
+    
+    return labelNameToIndex
+  
+  def extractLabel(self, imageData, labelValue):
+    thresh = vtk.vtkImageThreshold()
+    thresh.SetInputData(imageData)
+    thresh.ThresholdBetween(labelValue, labelValue)
+    thresh.SetInValue(1)
+    thresh.SetOutValue(0)
+    thresh.Update()
+    return thresh.GetOutput()
+
+  def extractSoftTissuesSegmentation(self, labelmapNode, labelNameToIndex, bounds, voxelSize):
+    volumeData = vtk.vtkImageData()
+    self.initializeVolumeData(volumeData, bounds, voxelSize, 0)
+    labelMapImageData = labelmapNode.GetImageData()
+    for labelName, index in labelNameToIndex.items():
+      mask = self.extractLabel(labelMapImageData, index)
+      if labelName != "soft_tissues":
+        dilateFilter = vtk.vtkImageDilateErode3D()
+        dilateFilter.SetInputData(mask)
+        dilateFilter.SetDilateValue(1)
+        dilateFilter.SetErodeValue(0)
+        dilateFilter.SetKernelSize(5, 5, 5)  # 3x3x3 neighborhood
+        dilateFilter.Update()
+        mask = dilateFilter.GetOutput()
+      self.applyImageStencilToVolume(mask, volumeData, 1)
+
+    return volumeData
+
+  def computeWeightMap(self, referenceImageData, patientBounds, fullBounds, radius):
+    dims = referenceImageData.GetDimensions()
+    hMin = fullBounds[4]
+    hMax = fullBounds[5]
+    pMin = patientBounds[4]
+    pMax = patientBounds[5]
+    height = hMax - hMin
+    blendA = (pMin / height) * dims[2]
+    blendB = ((pMin + radius) / height) * dims[2]
+    blendC = ((pMax - radius) / height) * dims[2]
+    blendD = (pMax / height) * dims[2]
+    rad = radius / height * dims[2]
+
+    def computeSingleWeight(z, blendA, blendB, blendC, blendD, rad):
+      w = numpy.zeros_like(z, dtype=float)
+      mask1 = (z >= blendA) & (z < blendB)
+      mask2 = (z >= blendB) & (z < blendC)
+      mask3 = (z >= blendC) & (z <= blendD)
+
+      w[mask1] = 1.0 - ((blendB - z[mask1]) / rad)
+      w[mask2] = 1.0
+      w[mask3] = (blendD - z[mask3]) / rad
+
+      return w
+    
+    numpydims = (dims[2], dims[1], dims[0])
+    weightMap = numpy.fromfunction(lambda i, j, k: computeSingleWeight(i, blendA, blendB, blendC, blendD, rad), numpydims)
+    return weightMap
+
+  def extractSegmentationByIndex(self, labelmapNode, bounds, voxelSize, index):
+    volumeData = vtk.vtkImageData()
+    self.initializeVolumeData(volumeData, bounds, voxelSize, 0)
+    labelMapImageData = labelmapNode.GetImageData()
+    mask = self.extractLabel(labelMapImageData, index)
+    self.applyImageStencilToVolume(mask, volumeData, 1)
+    return volumeData
+
+  def blendVolumes(self, vtkImgFantom, vtkImgPatient, weightMap):
+    # helper function to convert vtkImageData to numpy array
+    def vtkToNumpy(img):
+      dims = img.GetDimensions()
+      vtkArray = img.GetPointData().GetScalars()
+      numpyArray = vtk.util.numpy_support.vtk_to_numpy(vtkArray)
+      numpyArray = numpyArray.reshape(dims[::-1])
+      return numpyArray
+
+    # helper function to convert numpy array to vktimagedata
+    def numpyToVtk(numpyArray, dims):
+      flatArray = numpyArray.ravel()
+      vtkArray = vtk.util.numpy_support.numpy_to_vtk(num_array=flatArray, deep=True, array_type=vtk.VTK_INT)
+      vtkImg = vtk.vtkImageData()
+      vtkImg.SetDimensions(dims)
+      vtkImg.GetPointData().SetScalars(vtkArray)
+      return vtkImg
+    
+    # Convert vtk to numpy
+    npFantom = vtkToNumpy(vtkImgFantom)
+    npPatient = vtkToNumpy(vtkImgPatient)
+
+    # For binary images: inside (1) is negative distance, outside (0) is positive distance
+    distFantom = scipy.ndimage.distance_transform_cdt(npFantom == 0) - scipy.ndimage.distance_transform_cdt(npFantom == 1)
+    distPatient = scipy.ndimage.distance_transform_cdt(npPatient == 0) - scipy.ndimage.distance_transform_cdt(npPatient == 1)
+
+    # linaer blend and threshold to binary
+    blendedDist = weightMap * distPatient + (1 - weightMap) * distFantom
+    blendedBinary = (blendedDist <= 0).astype(numpy.int32)
+
+    # Convert back to vtkImageData
+    vtkBlended = numpyToVtk(blendedBinary, vtkImgFantom.GetDimensions())
+    return vtkBlended
+
+  def blendSegmentationNodes(self, fantomNode, patientNode, blendRadius) -> None:
+    if fantomNode is None or patientNode is None:
+      return
+    # maxBounds stores the overall bouding box of both segmentations in RAS coordinates
+    # [xmin, xmax, ymin, ymax, zmin, zmax]
+    fantomBounds = self.computeSegmentationNodeBounds(fantomNode)
+    patientBounds = self.computeSegmentationNodeBounds(patientNode)
+    maxBounds = fantomBounds
+    for i in [0, 2, 4]:
+      maxBounds[i] = min(maxBounds[i], patientBounds[i])
+      maxBounds[i + 1] = max(maxBounds[i + 1], patientBounds[i + 1])
+    # find now the voxel size/spacing to use. use the smaller one of all nodes/segmentations.
+    voxelSize = self.computeMinSpacing(fantomNode, patientNode)
+
+    # progress dialog
+    progressDialog = slicer.util.createProgressDialog(parent = None, value = 0, maximum = 100)
+
+    # create a dummy volume node so we can have the converted labelmap in correct position and orientation
+    volumeNode = self.createVolumeNode(voxelSize)
+    volumeData = vtk.vtkImageData()
+    self.initializeVolumeData(volumeData, maxBounds, voxelSize, -1000)
+    self.initializeVolumeNode(volumeData, maxBounds, volumeNode)
+    # make labelmap nodes that fit the final volume
+    fantomLabelmapNode = self.makeSegmentationLabelmapNode(fantomNode, volumeNode)
+    fantomLabelNameToIdx = self.getLabelMapNameToIndexMap(fantomNode)
+    patientLabelMapNode = self.makeSegmentationLabelmapNode(patientNode, volumeNode)
+    patientLabelNameToIdx = self.getLabelMapNameToIndexMap(patientNode)
+    # remove dummy volume node...
+    slicer.mrmlScene.RemoveNode(volumeNode)
+
+    # numpy array wiht the weight map.
+    numpyBlendWeights = self.computeWeightMap(volumeData, patientBounds, maxBounds, blendRadius)
+  
+    # create a node for the blended segmentation that encompasses both fantom and patient nodes
+    segmentationVolumeNode = self.createVolumeSegmentationNode()
+    
+    # extract the soft tissue segmentations for the fantom. 
+    # blend soft tissues mask
+    # add binary label map to segmentation and fill it using the soft tissue segmentation.
+    progressDialog.setLabelText("Extracting segmentation soft_tissues")
+    slicer.app.processEvents()
+    softTissueMaskFantom = self.extractSoftTissuesSegmentation(fantomLabelmapNode, fantomLabelNameToIdx, maxBounds, voxelSize)
+    softTissueMaskPatient = self.extractSoftTissuesSegmentation(patientLabelMapNode, patientLabelNameToIdx, maxBounds, voxelSize)
+    progressDialog.setLabelText("Blending segmentation soft_tissues")
+    slicer.app.processEvents()
+    blendedSoftTissueMask = self.blendVolumes(softTissueMaskFantom, softTissueMaskPatient, numpyBlendWeights)
+    oriented = slicer.vtkOrientedImageData()
+    oriented.ShallowCopy(blendedSoftTissueMask)
+    oriented.SetSpacing(fantomLabelmapNode.GetSpacing())
+    oriented.SetOrigin(fantomLabelmapNode.GetOrigin())
+    segmentationVolumeNode.AddSegmentFromBinaryLabelmapRepresentation(oriented, "soft_tissues")
+
+    # go over the lookup table. blend segmentations available in both fantom and patient
+    # and if some segmentation is not available in both, there is no need to blend and the mask can be used as is. 
+    lookupArray = getLookupArray()
+    for lookupEntry in lookupArray:
+      if lookupEntry["id"] == "soft_tissues":
+        continue # skip soft tissues as it's processed separately
+
+      if lookupEntry["id"] in fantomLabelNameToIdx:
+        idxFantom = fantomLabelNameToIdx[lookupEntry["id"]]
+      else:
+        idxFantom = None
+      if lookupEntry["id"] in patientLabelNameToIdx:
+        idxPatient = patientLabelNameToIdx[lookupEntry["id"]]
+      else:
+        idxPatient = None
+
+      if idxFantom is None and idxPatient is None:
+        continue # segmentation not present
+
+      oriented2 = slicer.vtkOrientedImageData()
+      progressDialog.setLabelText("Extracting segmentation " + lookupEntry["id"])
+      slicer.app.processEvents()
+
+      if idxFantom and idxPatient:
+        # blend
+        maskPatient = self.extractSegmentationByIndex(patientLabelMapNode, maxBounds, voxelSize, idxPatient)
+        maxkFantom = self.extractSegmentationByIndex(fantomLabelmapNode, maxBounds, voxelSize, idxFantom)
+        progressDialog.setLabelText("Blending segmentation " + lookupEntry["id"])
+        slicer.app.processEvents()
+        blendedMask = self.blendVolumes(maxkFantom, maskPatient, numpyBlendWeights)
+        oriented2.ShallowCopy(blendedMask)
+      elif idxFantom:
+        # use fantom
+        maxkFantom = self.extractSegmentationByIndex(fantomLabelmapNode, maxBounds, voxelSize, idxFantom)
+        oriented2.ShallowCopy(maxkFantom)
+      elif idxPatient:
+        # use patient
+        maskPatient = self.extractSegmentationByIndex(patientLabelMapNode, maxBounds, voxelSize, idxPatient)
+        oriented2.ShallowCopy(maskPatient)
+
+      oriented2.SetSpacing(fantomLabelmapNode.GetSpacing())
+      oriented2.SetOrigin(fantomLabelmapNode.GetOrigin())
+      segmentationVolumeNode.AddSegmentFromBinaryLabelmapRepresentation(oriented2, lookupEntry["id"])
+    
+    # close the progress dialog
+    progressDialog.close()
+
+    slicer.mrmlScene.RemoveNode(fantomLabelmapNode)
+    slicer.mrmlScene.RemoveNode(patientLabelMapNode)
     return
