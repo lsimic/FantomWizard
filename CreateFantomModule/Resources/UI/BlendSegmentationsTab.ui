@@ -40,8 +40,28 @@
         </property>
        </widget>
       </item>
-      <item row="3" column="0" colspan="2">
-       <widget class="qMRMLNodeComboBox" name="alignNodeComboBox">
+      <item row="1" column="0">
+       <widget class="ctkCheckBox" name="alignTranslationCheckBox">
+        <property name="enabled">
+         <bool>true</bool>
+        </property>
+        <property name="text">
+         <string>Align Translation</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="labelFantom">
+        <property name="text">
+         <string>Fantom</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="qMRMLNodeComboBox" name="alignNodeFantomComboBox">
         <property name="nodeTypes">
          <stringlist notr="true">
           <string>vtkMRMLSegmentationNode</string>
@@ -61,21 +81,8 @@
         </property>
        </widget>
       </item>
-      <item row="1" column="0">
-       <widget class="ctkCheckBox" name="alignTranslationCheckBox">
-        <property name="enabled">
-         <bool>true</bool>
-        </property>
-        <property name="text">
-         <string>Align Translation</string>
-        </property>
-        <property name="checked">
-         <bool>true</bool>
-        </property>
-       </widget>
-      </item>
-      <item row="4" column="0" colspan="2">
-       <widget class="QPushButton" name="alignButton">
+      <item row="5" column="1">
+       <widget class="QPushButton" name="alignFantomButton">
         <property name="enabled">
          <bool>true</bool>
         </property>
@@ -83,10 +90,39 @@
          <string>Run the algorithm.</string>
         </property>
         <property name="text">
-         <string>Align</string>
+         <string>Align Fantom to Patient</string>
         </property>
         <property name="checkable">
          <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="0">
+       <widget class="QLabel" name="labelPatient">
+        <property name="text">
+         <string>Patient</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="1">
+       <widget class="qMRMLNodeComboBox" name="alignNodePatientComboBox">
+        <property name="nodeTypes">
+         <stringlist notr="true">
+          <string>vtkMRMLSegmentationNode</string>
+         </stringlist>
+        </property>
+        <property name="hideChildNodeTypes">
+         <stringlist notr="true"/>
+        </property>
+        <property name="interactionNodeSingletonTag">
+         <string notr="true"/>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="1">
+       <widget class="QPushButton" name="alignPatientButton">
+        <property name="text">
+         <string>Align Patient to Fantom</string>
         </property>
        </widget>
       </item>

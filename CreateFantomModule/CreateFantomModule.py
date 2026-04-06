@@ -337,24 +337,29 @@ class BlendTabWidget:
 
     # Buttons
     self.ui.generateMarkupLinesButton.connect("clicked(bool)", self.onGenerateMarkupLinesButton)
-    self.ui.alignButton.connect("clicked(bool)", self.onAlignButton)
+    self.ui.alignFantomButton.connect("clicked(bool)", lambda: self.onAlignButton(True))
+    self.ui.alignPatientButton.connect("clicked(bool)", lambda: self.onAlignButton(False))
     self.ui.blendButton.connect("clicked(bool)", self.onBlendButton)
-    self.ui.alignNodeComboBox.setMRMLScene(slicer.mrmlScene)
+    self.ui.alignNodeFantomComboBox.setMRMLScene(slicer.mrmlScene)
+    self.ui.alignNodePatientComboBox.setMRMLScene(slicer.mrmlScene)
     self.ui.patientNodeComboBox.setMRMLScene(slicer.mrmlScene)
     self.ui.fantomNodeComboBox.setMRMLScene(slicer.mrmlScene)
 
   def onGenerateMarkupLinesButton(self) -> None:
     self.logic.setUpMarkupLines()
 
-  def onAlignButton(self) -> None:
+  def onAlignButton(self, fantomToPatient) -> None:
     alignRotation = self.ui.alignRotationCheckBox.checked
     alignTranslation = self.ui.alignTranslationCheckBox.checked
-    nodeToAlignID = self.ui.alignNodeComboBox.currentNodeID
+    if fantomToPatient:
+      nodeToAlignID = self.ui.alignNodeFantomComboBox.currentNodeID
+    else:
+      nodeToAlignID = self.ui.alignNodePatientComboBox.currentNodeID
     nodeToAlign = slicer.mrmlScene.GetNodeByID(nodeToAlignID)
     somethingToAlign = alignTranslation or alignRotation
     if not (somethingToAlign or nodeToAlign):
       return
-    self.logic.alignNodeUsingMarkupLines(nodeToAlign, alignRotation, alignTranslation)
+    self.logic.alignNodeUsingMarkupLines(nodeToAlign, alignRotation, alignTranslation, fantomToPatient)
 
   def onBlendButton(self) -> None:
     fantomNodeID = self.ui.fantomNodeComboBox.currentNodeID
@@ -1045,7 +1050,7 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     # switch to markups module to edit the lines.
     slicer.util.selectModule("Markups")
   
-  def alignNodeUsingMarkupLines(self, nodeToAlign, alignRotation, alignTranslation) -> None:
+  def alignNodeUsingMarkupLines(self, nodeToAlign, alignRotation, alignTranslation, fantomToPatient) -> None:
     # gather the markup lines and their start/end positions 
     startPositions = []
     endPositions = []
@@ -1059,6 +1064,11 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       startPositions.append(numpy.array(lineNode.GetLineStartPosition()))
       endPositions.append(numpy.array(lineNode.GetLineEndPosition()))
       lineNodes.append(lineNode)
+
+    # if aligning fantom to patient, swap start, end
+    if fantomToPatient:
+      startPositions, endPositions = endPositions, startPositions
+    
     # kabsch algorithm to construct the transform matrix
     # compute the translation matrix part
     startMidPoint = startPositions[0]
@@ -1107,7 +1117,10 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       posH = numpy.append(startPositions[idx], 1)
       posH = transform @ posH
       startPositions[idx] = posH[:3] / posH[3]
-      lineNodes[idx].SetLineStartPosition(startPositions[idx])
+      if fantomToPatient:
+        lineNodes[idx].SetLineEndPosition(startPositions[idx])
+      else:
+        lineNodes[idx].SetLineStartPosition(startPositions[idx])
     # apply transformation to segmentation node
     vtkTrans = vtk.vtkTransform()
     vtkMat = slicer.util.vtkMatrixFromArray(transform)
