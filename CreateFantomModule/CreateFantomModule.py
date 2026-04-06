@@ -363,7 +363,8 @@ class BlendTabWidget:
     patientNode = slicer.mrmlScene.GetNodeByID(patientNodeID)
     if not (fantomNode and patientNode):
       return
-    self.logic.blendSegmentationNodes(fantomNode, patientNode)
+    rad = self.ui.blendRadiusWidget.value
+    self.logic.blendSegmentationNodes(fantomNode, patientNode, rad)
 
 class CreateFantomModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
   """Uses ScriptedLoadableModuleWidget base class, available at:
@@ -1053,7 +1054,6 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
       markupLineName = "FantomLine" + str(lineIdx)
       itemList = slicer.mrmlScene.GetNodesByName(markupLineName)
       if itemList.GetNumberOfItems() < 1:
-        print("item list empty")
         return
       lineNode = itemList.GetItemAsObject(0)
       startPositions.append(numpy.array(lineNode.GetLineStartPosition()))
@@ -1115,6 +1115,257 @@ class CreateFantomModuleLogic(ScriptedLoadableModuleLogic):
     nodeToAlign.ApplyTransform(vtkTrans)
     nodeToAlign.GetDisplayNode().Modified()
     return
+  
+  def computeSegmentationNodeBounds(self, node):
+    maxBounds = []
+    segmentation = node.GetSegmentation()
+    for segmentIdx in range(segmentation.GetNumberOfSegments()):
+      segment = segmentation.GetNthSegment(segmentIdx)
+      currentBounds = [0, 0, 0, 0, 0, 0]
+      segment.GetBounds(currentBounds)
+      if len(maxBounds) < 1:
+        for item in currentBounds:
+          maxBounds.append(item)
+      else:
+        for i in [0, 2, 4]:
+          maxBounds[i] = min(maxBounds[i], currentBounds[i])
+        for i in [1, 3, 5]:
+          maxBounds[i] = max(maxBounds[i], currentBounds[i])
+    return maxBounds
+  
+  def computeMinSpacing(self, fantomNode, patientNode):
+    lableMapName = slicer.vtkSegmentationConverter.GetSegmentationBinaryLabelmapRepresentationName()
+    minSpacing = []
+    for segmentationNode in [fantomNode, patientNode]:
+      segmentation = segmentationNode.GetSegmentation()
+      for segmentIdx in range(segmentation.GetNumberOfSegments()):
+        segment = segmentation.GetNthSegment(segmentIdx)
+        imageData = segment.GetRepresentation(lableMapName)
+        voxelSize = imageData.GetSpacing()
+        if len(minSpacing) < 1:
+          for item in voxelSize:
+            minSpacing.append(item)
+        else:
+          for i in range(3):
+            minSpacing[i] = min(minSpacing[i], voxelSize[i])
+    return minSpacing
 
-  def blendSegmentationNodes(self, node1, node2) -> None:
+  def makeSegmentationLabelmapNode(self, segmentationNode, referenceVolumeNode):
+    segmentationLabelmapNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
+    slicer.modules.segmentations.logic().ExportSegmentsToLabelmapNode(
+      segmentationNode,
+      segmentationNode.GetSegmentation().GetSegmentIDs(),
+      segmentationLabelmapNode,
+      referenceVolumeNode
+    )
+    return segmentationLabelmapNode
+
+  def getLabelMapNameToIndexMap(self, segmentationNode):
+    labelNameToIndex = dict()
+    segmentation = segmentationNode.GetSegmentation()
+    for segmentIdx in range(segmentation.GetNumberOfSegments()):
+      segment = segmentation.GetNthSegment(segmentIdx)
+      labelNameToIndex[segment.GetName()] = segmentIdx + 1
+    
+    return labelNameToIndex
+  
+  def extractLabel(self, imageData, labelValue):
+    thresh = vtk.vtkImageThreshold()
+    thresh.SetInputData(imageData)
+    thresh.ThresholdBetween(labelValue, labelValue)
+    thresh.SetInValue(1)
+    thresh.SetOutValue(0)
+    thresh.Update()
+    return thresh.GetOutput()
+
+  def extractSoftTissuesSegmentation(self, labelmapNode, labelNameToIndex, bounds, voxelSize):
+    volumeData = vtk.vtkImageData()
+    self.initializeVolumeData(volumeData, bounds, voxelSize, 0)
+    labelMapImageData = labelmapNode.GetImageData()
+    for labelName, index in labelNameToIndex.items():
+      mask = self.extractLabel(labelMapImageData, index)
+      if labelName != "soft_tissues":
+        dilateFilter = vtk.vtkImageDilateErode3D()
+        dilateFilter.SetInputData(mask)
+        dilateFilter.SetDilateValue(1)
+        dilateFilter.SetErodeValue(0)
+        dilateFilter.SetKernelSize(5, 5, 5)  # 3x3x3 neighborhood
+        dilateFilter.Update()
+        mask = dilateFilter.GetOutput()
+      self.applyImageStencilToVolume(mask, volumeData, 1)
+
+    return volumeData
+
+  def computeWeightMap(self, referenceImageData, patientBounds, fullBounds, radius):
+    dims = referenceImageData.GetDimensions()
+    hMin = fullBounds[4]
+    hMax = fullBounds[5]
+    pMin = patientBounds[4]
+    pMax = patientBounds[5]
+    height = hMax - hMin
+    blendA = (pMin / height) * dims[2]
+    blendB = ((pMin + radius) / height) * dims[2]
+    blendC = ((pMax - radius) / height) * dims[2]
+    blendD = (pMax / height) * dims[2]
+    rad = radius / height * dims[2]
+
+    def computeSingleWeight(z, blendA, blendB, blendC, blendD, rad):
+      w = numpy.zeros_like(z, dtype=float)
+      mask1 = (z >= blendA) & (z < blendB)
+      mask2 = (z >= blendB) & (z < blendC)
+      mask3 = (z >= blendC) & (z <= blendD)
+
+      w[mask1] = 1.0 - ((blendB - z[mask1]) / rad)
+      w[mask2] = 1.0
+      w[mask3] = (blendD - z[mask3]) / rad
+
+      return w
+    
+    numpydims = (dims[2], dims[1], dims[0])
+    weightMap = numpy.fromfunction(lambda i, j, k: computeSingleWeight(i, blendA, blendB, blendC, blendD, rad), numpydims)
+    return weightMap
+
+  def extractSegmentationByIndex(self, labelmapNode, bounds, voxelSize, index):
+    volumeData = vtk.vtkImageData()
+    self.initializeVolumeData(volumeData, bounds, voxelSize, 0)
+    labelMapImageData = labelmapNode.GetImageData()
+    mask = self.extractLabel(labelMapImageData, index)
+    self.applyImageStencilToVolume(mask, volumeData, 1)
+    return volumeData
+
+  def blendVolumes(self, vtkImgFantom, vtkImgPatient, weightMap):
+    # helper function to convert vtkImageData to numpy array
+    def vtkToNumpy(img):
+      dims = img.GetDimensions()
+      vtkArray = img.GetPointData().GetScalars()
+      numpyArray = vtk.util.numpy_support.vtk_to_numpy(vtkArray)
+      numpyArray = numpyArray.reshape(dims[::-1])
+      return numpyArray
+
+    # helper function to convert numpy array to vktimagedata
+    def numpyToVtk(numpyArray, dims):
+      flatArray = numpyArray.ravel()
+      vtkArray = vtk.util.numpy_support.numpy_to_vtk(num_array=flatArray, deep=True, array_type=vtk.VTK_INT)
+      vtkImg = vtk.vtkImageData()
+      vtkImg.SetDimensions(dims)
+      vtkImg.GetPointData().SetScalars(vtkArray)
+      return vtkImg
+    
+    # Convert vtk to numpy
+    npFantom = vtkToNumpy(vtkImgFantom)
+    npPatient = vtkToNumpy(vtkImgPatient)
+
+    # For binary images: inside (1) is negative distance, outside (0) is positive distance
+    distFantom = scipy.ndimage.distance_transform_cdt(npFantom == 0) - scipy.ndimage.distance_transform_cdt(npFantom == 1)
+    distPatient = scipy.ndimage.distance_transform_cdt(npPatient == 0) - scipy.ndimage.distance_transform_cdt(npPatient == 1)
+
+    # linaer blend and threshold to binary
+    blendedDist = weightMap * distPatient + (1 - weightMap) * distFantom
+    blendedBinary = (blendedDist <= 0).astype(numpy.int32)
+
+    # Convert back to vtkImageData
+    vtkBlended = numpyToVtk(blendedBinary, vtkImgFantom.GetDimensions())
+    return vtkBlended
+
+  def blendSegmentationNodes(self, fantomNode, patientNode, blendRadius) -> None:
+    if fantomNode is None or patientNode is None:
+      return
+    # maxBounds stores the overall bouding box of both segmentations in RAS coordinates
+    # [xmin, xmax, ymin, ymax, zmin, zmax]
+    fantomBounds = self.computeSegmentationNodeBounds(fantomNode)
+    patientBounds = self.computeSegmentationNodeBounds(patientNode)
+    maxBounds = fantomBounds
+    for i in [0, 2, 4]:
+      maxBounds[i] = min(maxBounds[i], patientBounds[i])
+      maxBounds[i + 1] = max(maxBounds[i + 1], patientBounds[i + 1])
+    # find now the voxel size/spacing to use. use the smaller one of all nodes/segmentations.
+    voxelSize = self.computeMinSpacing(fantomNode, patientNode)
+
+    # progress dialog
+    progressDialog = slicer.util.createProgressDialog(parent = None, value = 0, maximum = 100)
+
+    # create a dummy volume node so we can have the converted labelmap in correct position and orientation
+    volumeNode = self.createVolumeNode(voxelSize)
+    volumeData = vtk.vtkImageData()
+    self.initializeVolumeData(volumeData, maxBounds, voxelSize, -1000)
+    self.initializeVolumeNode(volumeData, maxBounds, volumeNode)
+    # make labelmap nodes that fit the final volume
+    fantomLabelmapNode = self.makeSegmentationLabelmapNode(fantomNode, volumeNode)
+    fantomLabelNameToIdx = self.getLabelMapNameToIndexMap(fantomNode)
+    patientLabelMapNode = self.makeSegmentationLabelmapNode(patientNode, volumeNode)
+    patientLabelNameToIdx = self.getLabelMapNameToIndexMap(patientNode)
+    # remove dummy volume node...
+    slicer.mrmlScene.RemoveNode(volumeNode)
+
+    # numpy array wiht the weight map.
+    numpyBlendWeights = self.computeWeightMap(volumeData, patientBounds, maxBounds, blendRadius)
+  
+    # create a node for the blended segmentation that encompasses both fantom and patient nodes
+    segmentationVolumeNode = self.createVolumeSegmentationNode()
+    
+    # extract the soft tissue segmentations for the fantom. 
+    # blend soft tissues mask
+    # add binary label map to segmentation and fill it using the soft tissue segmentation.
+    progressDialog.setLabelText("Extracting segmentation soft_tissues")
+    slicer.app.processEvents()
+    softTissueMaskFantom = self.extractSoftTissuesSegmentation(fantomLabelmapNode, fantomLabelNameToIdx, maxBounds, voxelSize)
+    softTissueMaskPatient = self.extractSoftTissuesSegmentation(patientLabelMapNode, patientLabelNameToIdx, maxBounds, voxelSize)
+    progressDialog.setLabelText("Blending segmentation soft_tissues")
+    slicer.app.processEvents()
+    blendedSoftTissueMask = self.blendVolumes(softTissueMaskFantom, softTissueMaskPatient, numpyBlendWeights)
+    oriented = slicer.vtkOrientedImageData()
+    oriented.ShallowCopy(blendedSoftTissueMask)
+    oriented.SetSpacing(fantomLabelmapNode.GetSpacing())
+    oriented.SetOrigin(fantomLabelmapNode.GetOrigin())
+    segmentationVolumeNode.AddSegmentFromBinaryLabelmapRepresentation(oriented, "soft_tissues")
+
+    # go over the lookup table. blend segmentations available in both fantom and patient
+    # and if some segmentation is not available in both, there is no need to blend and the mask can be used as is. 
+    lookupArray = getLookupArray()
+    for lookupEntry in lookupArray:
+      if lookupEntry["id"] == "soft_tissues":
+        continue # skip soft tissues as it's processed separately
+
+      if lookupEntry["id"] in fantomLabelNameToIdx:
+        idxFantom = fantomLabelNameToIdx[lookupEntry["id"]]
+      else:
+        idxFantom = None
+      if lookupEntry["id"] in patientLabelNameToIdx:
+        idxPatient = patientLabelNameToIdx[lookupEntry["id"]]
+      else:
+        idxPatient = None
+
+      if idxFantom is None and idxPatient is None:
+        continue # segmentation not present
+
+      oriented2 = slicer.vtkOrientedImageData()
+      progressDialog.setLabelText("Extracting segmentation " + lookupEntry["id"])
+      slicer.app.processEvents()
+
+      if idxFantom and idxPatient:
+        # blend
+        maskPatient = self.extractSegmentationByIndex(patientLabelMapNode, maxBounds, voxelSize, idxPatient)
+        maxkFantom = self.extractSegmentationByIndex(fantomLabelmapNode, maxBounds, voxelSize, idxFantom)
+        progressDialog.setLabelText("Blending segmentation " + lookupEntry["id"])
+        slicer.app.processEvents()
+        blendedMask = self.blendVolumes(maxkFantom, maskPatient, numpyBlendWeights)
+        oriented2.ShallowCopy(blendedMask)
+      elif idxFantom:
+        # use fantom
+        maxkFantom = self.extractSegmentationByIndex(fantomLabelmapNode, maxBounds, voxelSize, idxFantom)
+        oriented2.ShallowCopy(maxkFantom)
+      elif idxPatient:
+        # use patient
+        maskPatient = self.extractSegmentationByIndex(patientLabelMapNode, maxBounds, voxelSize, idxPatient)
+        oriented2.ShallowCopy(maskPatient)
+
+      oriented2.SetSpacing(fantomLabelmapNode.GetSpacing())
+      oriented2.SetOrigin(fantomLabelmapNode.GetOrigin())
+      segmentationVolumeNode.AddSegmentFromBinaryLabelmapRepresentation(oriented2, lookupEntry["id"])
+    
+    # close the progress dialog
+    progressDialog.close()
+
+    slicer.mrmlScene.RemoveNode(fantomLabelmapNode)
+    slicer.mrmlScene.RemoveNode(patientLabelMapNode)
     return
