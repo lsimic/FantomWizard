@@ -49,7 +49,6 @@ The functionality under the `Export` tab can be used to generate a computational
 7. Specify Output path (if exporting DICOM or voxelized format)
 8. Hit "Apply"
 
-
 ## Reporting issues
 If you encounter issues, please report them using the provided [bug template](https://github.com/lsimic/FantomWizard/issues/new?template=bug_report.md)
 
