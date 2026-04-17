@@ -54,3 +54,6 @@ If you encounter issues, please report them using the provided [bug template](ht
 
 ## Feature requests
 If you would like the functionality of this plugin to be extended, please use the provided [feature request template](https://github.com/lsimic/FantomWizard/issues/new?template=feature_request.md)
+
+## ACKNOWLEDGEMENT 
+This study is supported by PIANOFORTE Grant Call 2023, project SONORA (Towards Safe, Optimized and persoNalized radiOlogy and RAdiotherapy procedures for pregnant patients), Grant Number HORIZON-EURATOM-2023-NRT-01  (101061037).  

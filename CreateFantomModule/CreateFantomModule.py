@@ -90,7 +90,7 @@ class CreateFantomModule(ScriptedLoadableModule):
     self.parent.categories = [translate("qSlicerAbstractCoreModule", "Wizards")]
     self.parent.contributors = ["Luka Simic"]
     self.parent.helpText = _("""Create Fantom. More information on <a href="https://github.com/lsimic/FantomWizard">GitHub</a>. """)
-    self.parent.acknowledgementText = _("Developed in collaboration with KBC Osijek")
+    self.parent.acknowledgementText = _("This project is supported by PIANOFORTE Grant Call 2023, project SONORA (Towards Safe, Optimized and persoNalized radiOlogy and RAdiotherapy procedures for pregnant patients), Grant Number HORIZON-EURATOM-2023-NRT-01 (101061037).")
 
 @parameterNodeWrapper
 class CreateFantomModuleParameterNode:
